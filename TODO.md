@@ -26,7 +26,7 @@
 - `textures/wood_dark.jpg`（五角形）: ambientCG「Wood027」の Color マップを 512px に縮小。
 - `textures/wood_light.jpg`（六角形）: ambientCG「Wood095」の Color マップを 512×256px に縮小。
 - ライセンス: CC0 1.0（クレジット表記は不要。https://docs.ambientcg.com/license/ ）
-- `textures/panorama_engawa_chatgpt.jpg` / `textures/panorama_engawa_gemini.jpg`（背景候補）: ChatGPT と Gemini で生成した、縁側から日本庭園と和室を見る360度パノラマ（正距円筒図法）。2048×1024px の JPEG に縮小。
+- `textures/panorama_engawa_chatgpt.jpg` / `textures/panorama_engawa_gemini.jpg`（背景。使用中は Gemini 版、ChatGPT 版は候補として保管）: ChatGPT と Gemini で生成した、縁側から日本庭園と和室を見る360度パノラマ（正距円筒図法）。2048×1024px の JPEG に縮小。
   - 元画像は `source_images/` に保管（.gitignore で公開対象外）。
 
 ## やりたいこと
@@ -43,6 +43,7 @@
 
 ## 完了
 
+- 2026-10-30 D2. 背景（縁側から日本庭園と和室を見る360度パノラマ。Gemini で生成。球を回すと背景も一緒に回り、3D空間の中にいる感じを出す。回る量は index.html の BACKGROUND_TURN で調整可（今は 1 = 部屋の中で球を回している状態）。明るさは少し落とす。追加のぼかしは、画面に映るのが360度のうち45度ほどで、それだけで十分やわらかくなるため不要と判断）
 - 2026-10-30 D1. 盤に木目テクスチャ（五角形は濃い木 Wood027、六角形は白めの木 Wood095。面ごとに木目の向きをランダムにして寄木細工風に。画像の読み込み前は木の色の単色で表示）
 - 2026-10-30 K7. あなた側の投了（パスとリセットの間に「参りました」ボタン。誤操作防止に2回押しで確定。スマートフォン幅360pxでも3つのボタンが1行に収まるので、アクションメニューは作らない）
 - 2026-10-30 K5. 遊び方（当面はCPU戦のみ。出落ち感のあるゲームなので、対戦形式は増やさない。要望が出たら同じ端末での2人対戦を検討。白を持つ機能は需要が薄いので作らない）

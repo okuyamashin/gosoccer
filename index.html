@@ -576,14 +576,15 @@
         const BACKGROUND_TURN = 1.0;
         const BACKGROUND_BRIGHTNESS = 0xc0c0c0; // Darkened a little so the board stands out
 
-        // Equirectangular panorama (pre-blurred) on a large sphere seen from inside.
+        // Equirectangular panorama on a large sphere seen from inside. No extra blur is needed:
+        // only about 45 degrees of it fill the screen, so it is already soft.
         // Generated with Gemini; see TODO.md "使用素材".
         function createBackground() {
             const geo = new THREE.SphereGeometry(80, 64, 32);
             geo.scale(-1, 1, 1);         // Seen from inside, so flip it to keep the picture unmirrored
             geo.rotateY(-Math.PI / 2);   // Garden (image center) behind the ball at the start
             const mat = new THREE.MeshBasicMaterial({ color: 0x0f172a, fog: false, depthWrite: false });
-            new THREE.TextureLoader().load('textures/background_engawa.jpg', (tex) => {
+            new THREE.TextureLoader().load('textures/panorama_engawa_gemini.jpg', (tex) => {
                 mat.map = tex;
                 mat.color.set(BACKGROUND_BRIGHTNESS);
                 mat.needsUpdate = true;
