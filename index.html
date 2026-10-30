@@ -190,8 +190,16 @@
         const matWhite = new THREE.MeshPhysicalMaterial({ 
             color: 0xf8f9fa, roughness: 0.2, metalness: 0.1, clearcoat: 0.5 
         });
-        const matEdge = new THREE.MeshStandardMaterial({ 
-            color: 0x111111, roughness: 1.0 
+        const matEdge = new THREE.MeshStandardMaterial({
+            color: 0x111111, roughness: 1.0
+        });
+        // Empty point where Black cannot play (suicide or ko)
+        const matIllegal = new THREE.MeshBasicMaterial({
+            color: 0xef4444, transparent: true, opacity: 0.8
+        });
+        // Red outline around stones in atari (a slightly larger back-face sphere)
+        const matAtari = new THREE.MeshBasicMaterial({
+            color: 0xef4444, side: THREE.BackSide
         });
         
         // Procedural Wood Texture generator
@@ -359,6 +367,13 @@
                 mesh.position.copy(points[i]);
                 mesh.scale.set(0.2, 0.2, 0.2); // Start small (empty indicator)
                 mesh.userData = { index: i }; // Store graph index for Raycaster
+
+                let halo = new THREE.Mesh(sphereGeo, matAtari);
+                halo.scale.set(1.2, 1.2, 1.2);
+                halo.visible = false;
+                mesh.add(halo);
+                mesh.userData.halo = halo;
+
                 scene.add(mesh);
                 nodeMeshes.push(mesh);
             }
@@ -735,6 +750,7 @@
             gameOver = true;
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
+            updateBoardVisuals(); // Clear illegal-point markers
             let score = computeScore();
             let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
             showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
@@ -746,6 +762,7 @@
             gameOver = true;
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
+            updateBoardVisuals(); // Clear illegal-point markers
             showResult(t('resultResign'));
             updateOutlook(); // Hidden once the result is shown
             showToast(t('cpuResigns'));
@@ -780,6 +797,17 @@
         // --- VISUAL & UI UPDATES ---
 
         function updateBoardVisuals() {
+            // Stones in atari (one liberty left), for both colors
+            let inAtari = new Set();
+            ['B', 'W'].forEach(color => {
+                findGroups(color).forEach(grp => {
+                    if (getLiberties(grp) === 1) grp.forEach(n => inAtari.add(n));
+                });
+            });
+
+            // Illegal points are shown only while Black is to move
+            const showIllegal = !gameOver && currentPlayer === 'B';
+
             for(let i = 0; i < TOTAL_NODES; i++){
                 let mesh = nodeMeshes[i];
                 if(board[i] === 'B') {
@@ -788,11 +816,29 @@
                 } else if(board[i] === 'W') {
                     mesh.material = matWhite;
                     mesh.scale.set(1, 1, 1);
+                } else if(showIllegal && !isLegalMove(i, 'B')) {
+                    mesh.material = matIllegal;
+                    mesh.scale.set(0.3, 0.3, 0.3);
                 } else {
                     mesh.material = matEmpty;
                     mesh.scale.set(0.2, 0.2, 0.2); // Shrink back to empty indicator
                 }
+                mesh.userData.halo.visible = inAtari.has(i);
             }
+        }
+
+        // Would this move be legal (not suicide, no repeated position)? Board is left unchanged.
+        function isLegalMove(index, color) {
+            if (board[index] !== null) return false;
+            const saved = [...board];
+            const enemy = color === 'B' ? 'W' : 'B';
+            board[index] = color;
+            findGroups(enemy).forEach(grp => {
+                if (getLiberties(grp) === 0) grp.forEach(n => board[n] = null);
+            });
+            const legal = getLiberties(getGroup(index)) > 0 && !positionHistory.has(boardKey(board));
+            board = saved;
+            return legal;
         }
 
         function updateUI() {
@@ -813,6 +859,8 @@
                 pnlB.classList.add('border-transparent', 'opacity-50');
                 pnlB.classList.remove('border-blue-400', 'bg-blue-500/20');
             }
+
+            updateBoardVisuals(); // Illegal-point markers depend on whose turn it is
         }
 
         // UI Buttons
