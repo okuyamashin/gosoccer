@@ -8,6 +8,13 @@ every point has exactly 3 liberties, so games are short and fights start fast.
 
 **Play it here:** https://okuyamashin.github.io/gosoccer/
 
+**Watch the video** (1:36, with the song "Go Soccer — No Place to Corner Me"):
+
+[![Go Soccer video](https://img.youtube.com/vi/aAELiRBqbMY/maxresdefault.jpg)](https://youtu.be/aAELiRBqbMY)
+
+You can also watch the CPU play against itself in the browser:
+https://okuyamashin.github.io/gosoccer/?demo
+
 ## How to play
 
 - You play Black and move first. The CPU plays White.
@@ -15,6 +22,7 @@ every point has exactly 3 liberties, so games are short and fights start fast.
 - Capture stones by taking away all their liberties, as in regular Go.
 - When both players pass in a row, the game goes to the result check (see below).
 - Press **Resign** (「参りました」) twice to give up.
+- Press **Demo (CPU vs CPU)** to watch the CPU play both sides.
 
 ## Rules
 
@@ -50,6 +58,8 @@ every point has exactly 3 liberties, so games are short and fights start fast.
 index.html      The whole game: UI, rules, CPU (Web Worker) and 3D rendering
 textures/       Wood textures and the 360° background panorama
 TODO.md         Requests, bugs, open questions and decisions (in Japanese)
+og-image.jpg    Link preview image for social media
+video/          Scripts that record the explainer video (see below)
 ```
 
 There is no build step. The page uses [three.js](https://threejs.org/) r128 and
@@ -65,11 +75,26 @@ python3 -m http.server
 
 Then open http://localhost:8000/.
 
+### The video
+
+`video/record.mjs` records the published game with headless Chrome and adds
+Japanese and English captions, timed to the song. `video/mix.mjs` adds the
+music. The song file and the output are not in the repository.
+
+```bash
+cd video
+npm install
+node record.mjs
+node mix.mjs music/no_place_to_corner_me.mp3
+```
+
 ## Credits
 
 - Wood textures: [ambientCG](https://ambientcg.com/) Wood027 and Wood095,
   licensed under [CC0 1.0](https://docs.ambientcg.com/license/).
 - Background panorama: generated with Google Gemini.
+- Song: "Go Soccer — No Place to Corner Me", lyrics by Shin Okuyama, made with
+  Suno. © 2026 Shin Okuyama. Lyrics are in [video/lyrics.md](video/lyrics.md).
 
 ## Copyright
 

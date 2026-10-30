@@ -34,13 +34,7 @@
 
 ## やりたいこと
 
-### Y6. 説明動画を作って YouTube に上げ、GitHub から見られるようにする（進行中）
-- 曲「Go Soccer — No Place to Corner Me」（Suno で作成、1分36秒）に合わせた動画を自動作成済み: `video/out/gosoccer_music.mp4`（1920×1080、日英の字幕）。
-  - 曲は `video/music/no_place_to_corner_me.mp3`（公開リポジトリには入れない。.gitignore 済み）。歌詞は `video/lyrics.md`。
-  - 場面は曲の音量から読み取った区切りに合わせた: 語りのイントロ 0〜9秒（語りの字幕付き）→ 10.5秒でビート、盤の説明 → 32秒「逃げ場はない」で高速回転 → 40.5秒ブレイク → 43秒からCPU同士のデモ → 76秒「参りました」 → 86秒 遊べるURL。実際の切り替えは区切りより0.3〜0.6秒早い。
-  - 作り直し: `cd video && node record.mjs && node mix.mjs music/no_place_to_corner_me.mp3`
-- 残り: 本人が YouTube にアップロード → README に動画のサムネイルとリンクを追加。
-- メモ: Homebrew の ffmpeg は、このパソコンでは Python 3.15 のビルドに失敗して入らなかった（Xcode のコマンドラインツールが古い）。そのため npm の ffmpeg-static を `video/` の中だけで使っている。
+（ここに要望を追加していきます）
 
 ## 既知の不具合
 
@@ -52,6 +46,10 @@
 
 ## 完了
 
+- 2026-10-30 Y6. 説明動画を YouTube に公開し、README から見られるようにした（https://youtu.be/aAELiRBqbMY）
+  - 曲「Go Soccer — No Place to Corner Me」（1分36秒）に合わせて `video/record.mjs` で自動録画し、`video/mix.mjs` で音楽を合成。場面は曲の音量から読み取った区切りに合わせた（イントロ 0〜9秒、ビート 10.5秒、ブレイク 40.5秒、2番 43秒、「参りました」 76秒、URL 86秒）。
+  - README には YouTube のサムネイル画像を置き、動画へリンク（GitHub の README には動画を埋め込めないため）。
+  - Homebrew の ffmpeg はこのパソコンでは入らなかった（Xcode のコマンドラインツールが古い）ので、npm の ffmpeg-static を `video/` の中だけで使う。
 - 2026-10-30 Y5. デモ: CPU同士の対局を見られる（「デモ（CPU同士）」ボタン、または URL に `?demo`。打った石へ球を回し、終局後6秒で次の対局を自動で始める。「デモ終了」かリセットで終わる。デモ中はパス・参りましたは無効）
 - 2026-10-30 D4. X（Twitter）などでリンクを共有したときのカード画像（og-image.jpg）と、Open Graph / Twitter カードのメタタグ
 - 2026-10-30 B7. 石を置くときのクリックの当たり判定が厳しすぎる
