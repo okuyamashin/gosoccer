@@ -40,7 +40,7 @@
 
     <!-- UI Overlay -->
     <div class="fixed top-0 left-0 w-full p-4 pointer-events-none z-10 flex flex-col items-center">
-        <div class="glass-panel px-6 py-4 rounded-2xl shadow-2xl pointer-events-auto w-full max-w-md text-center">
+        <div id="panel" class="glass-panel px-6 py-4 rounded-2xl shadow-2xl pointer-events-auto w-full max-w-md text-center">
             <h1 class="text-2xl font-extrabold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400 mb-2">
                 <span data-i18n="title">囲碁サッカー</span>
             </h1>
@@ -320,6 +320,7 @@
             controls.enablePan = false;
             controls.minDistance = 8;
             controls.maxDistance = 25;
+            fitCamera();
 
             // Lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -383,10 +384,34 @@
 
             // Window Resize
             window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
                 renderer.setSize(window.innerWidth, window.innerHeight);
+                fitCamera();
             });
+        }
+
+        // Fit the whole ball into the screen area below the UI panel, on any aspect ratio
+        function fitCamera() {
+            const W = window.innerWidth, H = window.innerHeight;
+            const panelBottom = Math.min(document.getElementById('panel').getBoundingClientRect().bottom, H * 0.5);
+            const freeH = H - panelBottom;
+
+            const ballRadius = Math.max(...points.map(p => p.length())) + 0.6; // + stone radius
+            const tanHalfV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+            // Half-angle available for the ball: limited by the free height or by the width
+            const tanHalf = Math.min(tanHalfV * freeH / H, tanHalfV * W / H);
+            const dist = ballRadius * 1.08 / Math.sin(Math.atan(tanHalf));
+
+            // Keep the current viewing direction, change only the distance
+            camera.position.setLength(dist);
+            controls.maxDistance = Math.max(25, dist * 1.5);
+
+            // Shift the picture down so the ball is centered in the free area
+            camera.aspect = W / H;
+            camera.setViewOffset(W, H, 0, -(panelBottom / 2), W, H);
+            camera.updateProjectionMatrix();
+
+            // Keep the same amount of fog as at the original distance of 15
+            scene.fog.density = 0.02 * 15 / dist;
         }
 
         function setupInteraction() {
@@ -750,7 +775,7 @@
             gameOver = true;
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
-            updateBoardVisuals(); // Clear illegal-point markers
+            updateUI(); // Clear turn highlight and illegal-point markers
             let score = computeScore();
             let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
             showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
@@ -762,7 +787,7 @@
             gameOver = true;
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
-            updateBoardVisuals(); // Clear illegal-point markers
+            updateUI(); // Clear turn highlight and illegal-point markers
             showResult(t('resultResign'));
             updateOutlook(); // Hidden once the result is shown
             showToast(t('cpuResigns'));
@@ -848,7 +873,13 @@
             const pnlB = document.getElementById('pnl-B');
             const pnlW = document.getElementById('pnl-W');
 
-            if(currentPlayer === 'B') {
+            if(gameOver) {
+                // No one is to move: drop both highlights
+                pnlB.classList.remove('border-blue-400', 'bg-blue-500/20', 'opacity-50');
+                pnlW.classList.remove('border-red-400', 'bg-red-500/20', 'opacity-50');
+                pnlB.classList.add('border-transparent');
+                pnlW.classList.add('border-transparent');
+            } else if(currentPlayer === 'B') {
                 pnlB.classList.add('border-blue-400', 'bg-blue-500/20');
                 pnlB.classList.remove('border-transparent', 'opacity-50');
                 pnlW.classList.add('border-transparent', 'opacity-50');
