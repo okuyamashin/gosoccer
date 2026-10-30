@@ -70,6 +70,10 @@
                     <option value="5.5">5.5</option>
                     <option value="7.5">7.5</option>
                 </select>
+                <label class="flex items-center space-x-1 pl-3 text-slate-300 cursor-pointer">
+                    <input id="follow-cpu" type="checkbox" checked class="accent-sky-500">
+                    <span data-i18n="followCpu">CPUの手を追う</span>
+                </label>
             </div>
 
             <p class="text-xs text-slate-400 mb-4" data-i18n="ruleLine">石と、囲んだ点の合計が多い方の勝ち</p>
@@ -134,6 +138,7 @@
                 playerWins: 'あなたの勝ち',
                 cpuWins: 'CPUの勝ち',
                 komi: 'コミ（白）',
+                followCpu: 'CPUの手を追う',
                 komiChanged: k => `コミを ${k} 目にしました`,
                 outlook: 'そろそろ終わりかもしれないですね'
             },
@@ -162,6 +167,7 @@
                 playerWins: 'You win',
                 cpuWins: 'CPU wins',
                 komi: 'Komi (White)',
+                followCpu: 'Follow CPU',
                 komiChanged: k => `Komi set to ${k}`,
                 outlook: 'It might be about time to wrap up.'
             }
@@ -198,6 +204,9 @@
 
         // --- THREE.JS GLOBALS ---
         let scene, camera, renderer, controls;
+        let lastMoveMarker;
+        let lastMove = -1;     // Index of the most recent stone, -1 if none
+        let focusAnim = null;  // Running camera turn toward a point, or null
         let nodeMeshes = [];
         
         // Materials
@@ -226,6 +235,8 @@
         });
         const matTerritoryB = new THREE.MeshBasicMaterial({ color: 0x111111 });
         const matTerritoryW = new THREE.MeshBasicMaterial({ color: 0xf8f9fa });
+        // Dot on the most recent stone
+        const matLastMove = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
         // Red outline around stones in atari (a slightly larger back-face sphere)
         const matAtari = new THREE.MeshBasicMaterial({
             color: 0xef4444, side: THREE.BackSide
@@ -410,6 +421,11 @@
                 nodeMeshes.push(mesh);
             }
 
+            // Last-move marker: a small dot on the outer side of the stone
+            lastMoveMarker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 16), matLastMove);
+            lastMoveMarker.visible = false;
+            scene.add(lastMoveMarker);
+
             // Event Listeners for Interaction
             setupInteraction();
 
@@ -451,6 +467,7 @@
             let pointerDownPos = {x: 0, y: 0};
 
             renderer.domElement.addEventListener('pointerdown', (e) => {
+                focusAnim = null; // The player takes over the view
                 pointerDownPos.x = e.clientX;
                 pointerDownPos.y = e.clientY;
             });
@@ -525,6 +542,8 @@
 
             // --- Move is VALID ---
             positionHistory.add(currentHash);
+            lastMove = index;
+            if (currentPlayer === 'W' && followCpuMoves()) focusOn(index);
             consecutivePasses = 0; // Reset pass counter
 
             if(currentPlayer === 'B') captures.B += capturedEnemyStones.length;
@@ -1002,6 +1021,13 @@
             // Illegal points are shown only while Black is to move
             const showIllegal = !gameOver && !scoring && currentPlayer === 'B';
 
+            // Last-move dot, on the outside of the stone (hidden if that stone was captured)
+            lastMoveMarker.visible = !scoringDead && lastMove >= 0 && board[lastMove] !== null;
+            if (lastMoveMarker.visible) {
+                const p = points[lastMove];
+                lastMoveMarker.position.copy(p).setLength(p.length() + 0.55);
+            }
+
             if (scoringDead) {
                 showScoringBoard();
                 return;
@@ -1111,6 +1137,7 @@
             gameOver = false;
             scoring = false;
             scoringDead = null;
+            lastMove = -1;
             document.getElementById('scoring').classList.add('hidden');
             document.getElementById('btn-confirm').classList.add('hidden');
             document.getElementById('btn-pass').classList.remove('hidden');
@@ -1150,9 +1177,43 @@
             }, 3000);
         }
 
+        // --- FOLLOWING THE CPU'S MOVES ---
+        // Remembered per browser; works without storage too
+        function followCpuMoves() {
+            return document.getElementById('follow-cpu').checked;
+        }
+        try {
+            if (localStorage.getItem('followCpu') === 'off') document.getElementById('follow-cpu').checked = false;
+        } catch (e) {}
+        document.getElementById('follow-cpu').addEventListener('change', () => {
+            try { localStorage.setItem('followCpu', followCpuMoves() ? 'on' : 'off'); } catch (e) {}
+        });
+
+        // Turn the ball smoothly so that the given point faces the player
+        function focusOn(index) {
+            const from = camera.position.clone().normalize();
+            const to = points[index].clone().normalize();
+            if (from.angleTo(to) < THREE.MathUtils.degToRad(25)) return; // Already in view
+            focusAnim = {
+                start: performance.now(),
+                startPos: camera.position.clone(),
+                turn: new THREE.Quaternion().setFromUnitVectors(from, to)
+            };
+        }
+
+        function stepFocus() {
+            const DURATION = 700; // ms
+            let t = Math.min((performance.now() - focusAnim.start) / DURATION, 1);
+            t = t * t * (3 - 2 * t); // Ease in and out
+            const q = new THREE.Quaternion().slerp(focusAnim.turn, t);
+            camera.position.copy(focusAnim.startPos).applyQuaternion(q);
+            if (t >= 1) focusAnim = null;
+        }
+
         // --- ANIMATION LOOP ---
         function animate() {
             requestAnimationFrame(animate);
+            if (focusAnim) stepFocus();
             controls.update(); // Required for damping
             renderer.render(scene, camera);
         }
