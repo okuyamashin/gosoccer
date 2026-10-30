@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Go Soccer (Spherical Go)</title>
+    <!-- Tailwind CSS for UI styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f172a; /* Slate 900 */
+            font-family: 'Inter', sans-serif;
+            touch-action: none; /* Prevent browser scrolling on canvas */
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        /* Custom Toast Animation */
+        @keyframes slideUp {
+            from { transform: translate(-50%, 100%); opacity: 0; }
+            to { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .toast-animate {
+            animation: slideUp 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="text-white">
+
+    <!-- UI Overlay -->
+    <div class="fixed top-0 left-0 w-full p-4 pointer-events-none z-10 flex flex-col items-center">
+        <div class="glass-panel px-6 py-4 rounded-2xl shadow-2xl pointer-events-auto w-full max-w-md text-center">
+            <h1 class="text-2xl font-extrabold tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400 mb-2">
+                GO SOCCER
+            </h1>
+            <p class="text-xs text-slate-300 mb-4 tracking-widest uppercase">Spherical Go (60 Nodes)</p>
+            
+            <div class="flex justify-between items-center mb-4 px-2">
+                <div id="pnl-B" class="flex flex-col items-center transition-all duration-300 rounded-lg p-2 border-2 border-transparent">
+                    <div class="w-6 h-6 rounded-full bg-black shadow-[0_0_10px_rgba(0,0,0,0.8)] border border-gray-600 mb-1"></div>
+                    <span class="text-sm font-bold text-gray-200">PLAYER</span>
+                    <span id="score-B" class="text-xl font-bold">0</span>
+                </div>
+                
+                <div class="text-xs font-bold text-slate-400 tracking-widest">
+                    CAPTURES
+                </div>
+
+                <div id="pnl-W" class="flex flex-col items-center transition-all duration-300 rounded-lg p-2 border-2 border-transparent opacity-50">
+                    <div class="w-6 h-6 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)] border border-gray-300 mb-1"></div>
+                    <span class="text-sm font-bold text-gray-200">CPU</span>
+                    <span id="score-W" class="text-xl font-bold">0</span>
+                </div>
+            </div>
+
+            <div class="flex space-x-3 justify-center">
+                <button id="btn-pass" class="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg">
+                    Pass
+                </button>
+                <button id="btn-reset" class="flex-1 bg-red-900 hover:bg-red-800 active:bg-red-950 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg">
+                    Reset
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast" class="fixed bottom-10 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none hidden">
+        <div class="glass-panel px-6 py-3 rounded-full shadow-lg text-sm font-bold text-center">
+            <span id="toast-msg">Message</span>
+        </div>
+    </div>
+
+    <!-- Three.js and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/ConvexHull.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/ConvexGeometry.js"></script>
+
+    <script>
+        // --- GAME STATE ---
+        const TOTAL_NODES = 60;
+        let board = new Array(TOTAL_NODES).fill(null);
+        let currentPlayer = 'B';
+        let captures = { B: 0, W: 0 };
+        let lastBoardHash = "";
+        let consecutivePasses = 0;
+        let isCPUTurn = false;
+
+        // --- GRAPH DATA ---
+        let points = []; // 60 THREE.Vector3
+        let adj = Array.from({length: TOTAL_NODES}, () => []);
+
+        // --- THREE.JS GLOBALS ---
+        let scene, camera, renderer, controls;
+        let nodeMeshes = [];
+        
+        // Materials
+        const matEmpty = new THREE.MeshBasicMaterial({ 
+            color: 0x000000, transparent: true, opacity: 0.1 
+        });
+        const matBlack = new THREE.MeshPhysicalMaterial({ 
+            color: 0x111111, roughness: 0.2, metalness: 0.1, clearcoat: 0.5 
+        });
+        const matWhite = new THREE.MeshPhysicalMaterial({ 
+            color: 0xf8f9fa, roughness: 0.2, metalness: 0.1, clearcoat: 0.5 
+        });
+        const matEdge = new THREE.MeshStandardMaterial({ 
+            color: 0x111111, roughness: 1.0 
+        });
+        
+        // Procedural Wood Texture generator
+        function createWoodTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            // Base wood color
+            ctx.fillStyle = '#d4a373';
+            ctx.fillRect(0, 0, 512, 512);
+            
+            // Grain rings
+            ctx.lineWidth = 1.5;
+            for(let i = 0; i < 150; i++) {
+                ctx.beginPath();
+                let x = 256 + (Math.random() - 0.5) * 800;
+                let y = 256 + (Math.random() - 0.5) * 800;
+                let r = 50 + i * 5 + Math.random() * 15;
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(139, 90, 43, ${Math.random() * 0.15 + 0.05})`;
+                ctx.stroke();
+            }
+            
+            // Fine noise for texture depth
+            const imgData = ctx.getImageData(0, 0, 512, 512);
+            for(let i = 0; i < imgData.data.length; i += 4) {
+                let noise = (Math.random() - 0.5) * 20;
+                imgData.data[i] += noise;
+                imgData.data[i+1] += noise;
+                imgData.data[i+2] += noise;
+            }
+            ctx.putImageData(imgData, 0, 0);
+            
+            let tex = new THREE.CanvasTexture(canvas);
+            tex.anisotropy = 4;
+            return tex;
+        }
+
+        const matWood = new THREE.MeshStandardMaterial({
+            map: createWoodTexture(),
+            roughness: 0.9, 
+            metalness: 0.0,
+            flatShading: true // Highlights the flat faces of pentagons and hexagons
+        });
+
+        // Initialize App
+        window.onload = () => {
+            initMathGraph();
+            initThreeJS();
+            updateUI();
+            animate();
+        };
+
+        function initMathGraph() {
+            // 1. Generate Icosahedron vertices
+            const t = (1 + Math.sqrt(5)) / 2;
+            const icosaV = [
+                new THREE.Vector3(-1,  t,  0), new THREE.Vector3( 1,  t,  0),
+                new THREE.Vector3(-1, -t,  0), new THREE.Vector3( 1, -t,  0),
+                new THREE.Vector3( 0, -1,  t), new THREE.Vector3( 0,  1,  t),
+                new THREE.Vector3( 0, -1, -t), new THREE.Vector3( 0,  1, -t),
+                new THREE.Vector3( t,  0, -1), new THREE.Vector3( t,  0,  1),
+                new THREE.Vector3(-t,  0, -1), new THREE.Vector3(-t,  0,  1)
+            ];
+
+            // 2. Find the 30 edges of Icosahedron (distance = 2)
+            let edges = [];
+            for(let i = 0; i < 12; i++){
+                for(let j = i + 1; j < 12; j++){
+                    if(Math.abs(icosaV[i].distanceTo(icosaV[j]) - 2.0) < 0.05){
+                        edges.push([icosaV[i], icosaV[j]]);
+                    }
+                }
+            }
+
+            // 3. Truncate edges at 1/3 and 2/3 to get 60 vertices
+            const SCALE = 4; // Make the ball bigger
+            edges.forEach(edge => {
+                let p1 = edge[0].clone().lerp(edge[1], 1/3).multiplyScalar(SCALE);
+                let p2 = edge[0].clone().lerp(edge[1], 2/3).multiplyScalar(SCALE);
+                points.push(p1, p2);
+            });
+
+            // 4. Calculate Adjacency list (distance between neighbors is ~ 2.666 when scaled by 4)
+            const targetDist = (2/3) * SCALE;
+            for(let i = 0; i < TOTAL_NODES; i++){
+                for(let j = i + 1; j < TOTAL_NODES; j++){
+                    let d = points[i].distanceTo(points[j]);
+                    if(Math.abs(d - targetDist) < 0.1){
+                        adj[i].push(j);
+                        adj[j].push(i);
+                    }
+                }
+            }
+        }
+
+        function initThreeJS() {
+            // Scene Setup
+            scene = new THREE.Scene();
+            // Optional: add some subtle fog to blend into background
+            scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
+
+            // Camera Setup
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 15);
+
+            // Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.enablePan = false;
+            controls.minDistance = 8;
+            controls.maxDistance = 25;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight1.position.set(10, 10, 10);
+            scene.add(dirLight1);
+
+            const dirLight2 = new THREE.DirectionalLight(0xaabbff, 0.5);
+            dirLight2.position.set(-10, -10, -10);
+            scene.add(dirLight2);
+
+            // Create Truncated Icosahedron (Buckyball) solid faces
+            // ConvexGeometry safely wraps the 60 vertices into exactly 12 pentagons and 20 hexagons
+            const hullGeo = new THREE.ConvexGeometry(points);
+            const boardMesh = new THREE.Mesh(hullGeo, matWood);
+            scene.add(boardMesh);
+
+            // Draw Edges (Cylinders)
+            let drawnEdges = new Set();
+            for(let i = 0; i < TOTAL_NODES; i++){
+                adj[i].forEach(neighbor => {
+                    let edgeKey = i < neighbor ? `${i}-${neighbor}` : `${neighbor}-${i}`;
+                    if(!drawnEdges.has(edgeKey)) {
+                        drawnEdges.add(edgeKey);
+                        let p1 = points[i];
+                        let p2 = points[neighbor];
+                        let dist = p1.distanceTo(p2);
+                        
+                        let cylGeo = new THREE.CylinderGeometry(0.04, 0.04, dist, 8);
+                        let edgeMesh = new THREE.Mesh(cylGeo, matEdge);
+                        
+                        edgeMesh.position.copy(p1).lerp(p2, 0.5);
+                        edgeMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), p2.clone().sub(p1).normalize());
+                        scene.add(edgeMesh);
+                    }
+                });
+            }
+
+            // Draw Nodes (Clickable Intersections)
+            const sphereGeo = new THREE.SphereGeometry(0.6, 32, 32);
+            for(let i = 0; i < TOTAL_NODES; i++){
+                let mesh = new THREE.Mesh(sphereGeo, matEmpty);
+                mesh.position.copy(points[i]);
+                mesh.scale.set(0.2, 0.2, 0.2); // Start small (empty indicator)
+                mesh.userData = { index: i }; // Store graph index for Raycaster
+                scene.add(mesh);
+                nodeMeshes.push(mesh);
+            }
+
+            // Event Listeners for Interaction
+            setupInteraction();
+
+            // Window Resize
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function setupInteraction() {
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2();
+            let pointerDownPos = {x: 0, y: 0};
+
+            renderer.domElement.addEventListener('pointerdown', (e) => {
+                pointerDownPos.x = e.clientX;
+                pointerDownPos.y = e.clientY;
+            });
+
+            renderer.domElement.addEventListener('pointerup', (e) => {
+                // Ignore if it was a drag (rotating camera)
+                let dx = e.clientX - pointerDownPos.x;
+                let dy = e.clientY - pointerDownPos.y;
+                if(Math.sqrt(dx*dx + dy*dy) > 5) return;
+
+                // Raycast
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(nodeMeshes);
+
+                if(intersects.length > 0) {
+                    let clickedIndex = intersects[0].object.userData.index;
+                    // Prevent player from clicking during CPU turn
+                    if (!isCPUTurn && currentPlayer === 'B') {
+                        attemptMove(clickedIndex);
+                    }
+                }
+            });
+        }
+
+        // --- GO LOGIC ---
+
+        function attemptMove(index) {
+            if(board[index] !== null) return; // Already occupied
+
+            // Save state for rollback (Ko / Suicide)
+            let prevBoard = [...board];
+            
+            // 1. Place stone tentatively
+            board[index] = currentPlayer;
+            let enemy = currentPlayer === 'B' ? 'W' : 'B';
+            let capturedEnemyStones = [];
+
+            // 2. Check enemy groups for capture
+            let enemyGroups = findGroups(enemy);
+            enemyGroups.forEach(grp => {
+                if(getLiberties(grp) === 0) {
+                    capturedEnemyStones.push(...grp);
+                }
+            });
+
+            // Apply captures
+            capturedEnemyStones.forEach(idx => board[idx] = null);
+
+            // 3. Suicide rule check
+            let myGroup = getGroup(index);
+            if(getLiberties(myGroup) === 0) {
+                // Move is illegal (Suicide)
+                board = prevBoard; 
+                showToast("Suicide move is not allowed!");
+                return;
+            }
+
+            // 4. Ko rule check (Simple positional superko for last turn)
+            let currentHash = board.join('');
+            if(currentHash === lastBoardHash) {
+                board = prevBoard;
+                if(currentPlayer === 'B') showToast("Ko rule violation!");
+                return;
+            }
+
+            // --- Move is VALID ---
+            lastBoardHash = prevBoard.join('');
+            consecutivePasses = 0; // Reset pass counter
+
+            if(currentPlayer === 'B') captures.B += capturedEnemyStones.length;
+            else captures.W += capturedEnemyStones.length;
+
+            updateBoardVisuals();
+            
+            // Swap turns
+            currentPlayer = enemy;
+            updateUI();
+
+            // Trigger CPU if it's White's turn
+            if (currentPlayer === 'W') {
+                isCPUTurn = true;
+                setTimeout(playCPU, 500);
+            } else {
+                isCPUTurn = false;
+            }
+        }
+
+        // Graph Algorithms
+        function getGroup(startIndex) {
+            let color = board[startIndex];
+            let visited = new Set([startIndex]);
+            let queue = [startIndex];
+            let group = [];
+
+            while(queue.length > 0) {
+                let curr = queue.shift();
+                group.push(curr);
+                adj[curr].forEach(neighbor => {
+                    if(board[neighbor] === color && !visited.has(neighbor)) {
+                        visited.add(neighbor);
+                        queue.push(neighbor);
+                    }
+                });
+            }
+            return group;
+        }
+
+        function findGroups(color) {
+            let visited = new Set();
+            let groups = [];
+            for(let i = 0; i < TOTAL_NODES; i++) {
+                if(board[i] === color && !visited.has(i)) {
+                    let grp = getGroup(i);
+                    grp.forEach(n => visited.add(n));
+                    groups.push(grp);
+                }
+            }
+            return groups;
+        }
+
+        function getLiberties(group) {
+            let libs = new Set();
+            group.forEach(node => {
+                adj[node].forEach(neighbor => {
+                    if(board[neighbor] === null) {
+                        libs.add(neighbor);
+                    }
+                });
+            });
+            return libs.size;
+        }
+
+        // --- CPU AI ---
+        function playCPU() {
+            if (consecutivePasses >= 2 || currentPlayer !== 'W') return;
+
+            let validMoves = [];
+            let bestMove = -1;
+            let bestScore = -9999;
+
+            for (let i = 0; i < TOTAL_NODES; i++) {
+                if (board[i] !== null) continue;
+
+                // Simulate move
+                let prevBoard = [...board];
+                board[i] = 'W';
+                let enemy = 'B';
+                let captured = 0;
+
+                // Check captures
+                let enemyGroups = findGroups(enemy);
+                enemyGroups.forEach(grp => {
+                    if (getLiberties(grp) === 0) {
+                        captured += grp.length;
+                        grp.forEach(idx => board[idx] = null);
+                    }
+                });
+
+                let myGroup = getGroup(i);
+                let myLibs = getLiberties(myGroup);
+                
+                let isSuicide = myLibs === 0;
+                let isKo = board.join('') === lastBoardHash;
+
+                if (!isSuicide && !isKo) {
+                    // Valid move, evaluate heuristics
+                    let score = 0;
+                    score += captured * 50; // Prioritize capturing stones
+                    
+                    // Prioritize saving own stones (expanding liberties)
+                    if (myLibs > 1) {
+                        score += myLibs * 2;
+                    }
+                    
+                    // Add slight random variation so CPU doesn't always play same way
+                    score += Math.random() * 5;
+
+                    validMoves.push(i);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMove = i;
+                    }
+                }
+
+                // Revert board state for next simulation
+                board = [...prevBoard];
+            }
+
+            if (validMoves.length > 0 && bestMove !== -1) {
+                attemptMove(bestMove);
+            } else {
+                document.getElementById('btn-pass').click();
+            }
+        }
+
+        // --- VISUAL & UI UPDATES ---
+
+        function updateBoardVisuals() {
+            for(let i = 0; i < TOTAL_NODES; i++){
+                let mesh = nodeMeshes[i];
+                if(board[i] === 'B') {
+                    mesh.material = matBlack;
+                    mesh.scale.set(1, 1, 1);
+                } else if(board[i] === 'W') {
+                    mesh.material = matWhite;
+                    mesh.scale.set(1, 1, 1);
+                } else {
+                    mesh.material = matEmpty;
+                    mesh.scale.set(0.2, 0.2, 0.2); // Shrink back to empty indicator
+                }
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score-B').innerText = captures.B;
+            document.getElementById('score-W').innerText = captures.W;
+
+            const pnlB = document.getElementById('pnl-B');
+            const pnlW = document.getElementById('pnl-W');
+
+            if(currentPlayer === 'B') {
+                pnlB.classList.add('border-blue-400', 'bg-blue-500/20');
+                pnlB.classList.remove('border-transparent', 'opacity-50');
+                pnlW.classList.add('border-transparent', 'opacity-50');
+                pnlW.classList.remove('border-red-400', 'bg-red-500/20');
+            } else {
+                pnlW.classList.add('border-red-400', 'bg-red-500/20');
+                pnlW.classList.remove('border-transparent', 'opacity-50');
+                pnlB.classList.add('border-transparent', 'opacity-50');
+                pnlB.classList.remove('border-blue-400', 'bg-blue-500/20');
+            }
+        }
+
+        // UI Buttons
+        document.getElementById('btn-pass').addEventListener('click', () => {
+            if (isCPUTurn && currentPlayer === 'B') return; // Prevent player from passing during CPU turn
+
+            consecutivePasses++;
+            let msg = currentPlayer === 'B' ? "Player Passed" : "CPU Passed";
+            currentPlayer = currentPlayer === 'B' ? 'W' : 'B';
+            updateUI();
+            
+            if(consecutivePasses >= 2) {
+                showToast("Game Over! Both players passed.");
+            } else {
+                showToast(msg);
+                if (currentPlayer === 'W') {
+                    isCPUTurn = true;
+                    setTimeout(playCPU, 500);
+                } else {
+                    isCPUTurn = false;
+                }
+            }
+        });
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            board.fill(null);
+            currentPlayer = 'B';
+            isCPUTurn = false;
+            captures = { B: 0, W: 0 };
+            lastBoardHash = "";
+            consecutivePasses = 0;
+            updateBoardVisuals();
+            updateUI();
+            showToast("Game Reset");
+        });
+
+        // Toast Notification System
+        let toastTimeout;
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            const msgEl = document.getElementById('toast-msg');
+            msgEl.innerText = message;
+            
+            toast.classList.remove('hidden');
+            toast.classList.remove('toast-animate');
+            void toast.offsetWidth; // trigger reflow
+            toast.classList.add('toast-animate');
+
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 3000);
+        }
+
+        // --- ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // Required for damping
+            renderer.render(scene, camera);
+        }
+
+    </script>
+</body>
+</html>
