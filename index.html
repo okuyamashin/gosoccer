@@ -72,6 +72,8 @@
                 </select>
             </div>
 
+            <p id="outlook" class="hidden mb-4 px-2 py-2 rounded-lg bg-amber-500/20 border border-amber-400 text-sm font-bold" data-i18n="outlook">そろそろ終わりかもしれないですね</p>
+
             <p id="result" class="hidden mb-4 px-2 py-2 rounded-lg bg-emerald-500/20 border border-emerald-400 text-sm font-bold whitespace-pre-line"></p>
 
             <div class="flex space-x-3 justify-center">
@@ -120,7 +122,8 @@
                 playerWins: 'あなたの勝ち',
                 cpuWins: 'CPUの勝ち',
                 komi: 'コミ（白）',
-                komiChanged: k => `コミを ${k} 目にしました`
+                komiChanged: k => `コミを ${k} 目にしました`,
+                outlook: 'そろそろ終わりかもしれないですね'
             },
             en: {
                 docTitle: 'Go Soccer',
@@ -143,7 +146,8 @@
                 playerWins: 'You win',
                 cpuWins: 'CPU wins',
                 komi: 'Komi (White)',
-                komiChanged: k => `Komi set to ${k}`
+                komiChanged: k => `Komi set to ${k}`,
+                outlook: 'It might be about time to wrap up.'
             }
         };
         function t(key) { return TEXT[LANG][key]; }
@@ -452,7 +456,8 @@
             else captures.W += capturedEnemyStones.length;
 
             updateBoardVisuals();
-            
+            updateOutlook();
+
             // Swap turns
             currentPlayer = enemy;
             updateUI();
@@ -630,6 +635,101 @@
             return score;
         }
 
+        // --- OUTLOOK: has the player (Black) certainly lost? ---
+        // Points that are White's for sure, via Benson's algorithm: White chains that
+        // stay alive even if White always passes, plus Black-free eyes they enclose.
+        function whiteSecuredPoints() {
+            const chainId = new Array(TOTAL_NODES).fill(-1);
+            const chains = [];
+            for (let i = 0; i < TOTAL_NODES; i++) {
+                if (board[i] === 'W' && chainId[i] < 0) {
+                    let grp = getGroup(i);
+                    grp.forEach(n => chainId[n] = chains.length);
+                    chains.push(grp);
+                }
+            }
+
+            // Regions: connected areas of non-White points, with the White chains around them
+            const regionId = new Array(TOTAL_NODES).fill(-1);
+            const regions = [];
+            for (let i = 0; i < TOTAL_NODES; i++) {
+                if (board[i] === 'W' || regionId[i] >= 0) continue;
+                let region = { points: [], borders: new Set() };
+                let queue = [i];
+                regionId[i] = regions.length;
+                while (queue.length > 0) {
+                    let curr = queue.shift();
+                    region.points.push(curr);
+                    adj[curr].forEach(n => {
+                        if (board[n] === 'W') {
+                            region.borders.add(chainId[n]);
+                        } else if (regionId[n] < 0) {
+                            regionId[n] = regions.length;
+                            queue.push(n);
+                        }
+                    });
+                }
+                regions.push(region);
+            }
+
+            // A region is vital to a chain if every empty point in it is a liberty of that chain
+            const isVital = (r, c) => r.points.every(p =>
+                board[p] !== null || adj[p].some(n => chainId[n] === c));
+
+            let aliveChains = new Set(chains.keys());
+            let enclosedRegions = new Set(regions.keys());
+            let changed = true;
+            while (changed) {
+                changed = false;
+                enclosedRegions.forEach(r => {
+                    if ([...regions[r].borders].some(c => !aliveChains.has(c))) {
+                        enclosedRegions.delete(r);
+                        changed = true;
+                    }
+                });
+                aliveChains.forEach(c => {
+                    let vitalCount = 0;
+                    enclosedRegions.forEach(r => {
+                        if (regions[r].borders.has(c) && isVital(regions[r], c)) vitalCount++;
+                    });
+                    if (vitalCount < 2) {
+                        aliveChains.delete(c);
+                        changed = true;
+                    }
+                });
+            }
+
+            let secured = 0;
+            aliveChains.forEach(c => secured += chains[c].length);
+            enclosedRegions.forEach(r => {
+                const reg = regions[r];
+                const blackFree = reg.points.every(p => board[p] === null);
+                const vitalToSome = [...reg.borders].some(c => isVital(reg, c));
+                if (blackFree && vitalToSome) secured += reg.points.length;
+            });
+            return secured;
+        }
+
+        // Black's best possible score is everything White has not secured
+        function playerCannotWin() {
+            const secured = whiteSecuredPoints();
+            return TOTAL_NODES - secured < secured + komi;
+        }
+
+        let outlookShown = false;
+        function updateOutlook() {
+            const el = document.getElementById('outlook');
+            if (gameOver || !playerCannotWin()) {
+                el.classList.add('hidden');
+                return;
+            }
+            el.classList.remove('hidden');
+            if (!outlookShown) {
+                outlookShown = true;
+                showToast(t('outlook'));
+            }
+        }
+
         // --- GAME END ---
         function endGame() {
             gameOver = true;
@@ -638,6 +738,7 @@
             let score = computeScore();
             let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
             showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
+            updateOutlook(); // Hidden once the result is shown
             showToast(t('gameOver'));
         }
 
@@ -646,6 +747,7 @@
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
             showResult(t('resultResign'));
+            updateOutlook(); // Hidden once the result is shown
             showToast(t('cpuResigns'));
         }
 
@@ -729,6 +831,8 @@
             consecutivePasses = 0;
             gameOver = false;
             komiSelect.disabled = false; // Keep the chosen komi for the next game
+            outlookShown = false;
+            updateOutlook();
             document.getElementById('result').classList.add('hidden');
             updateBoardVisuals();
             updateUI();
@@ -740,6 +844,7 @@
         komiSelect.addEventListener('change', () => {
             komi = parseFloat(komiSelect.value);
             showToast(t('komiChanged')(komi));
+            updateOutlook(); // Komi changes how much Black needs
         });
 
         // Toast Notification System
