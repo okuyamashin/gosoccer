@@ -89,10 +89,13 @@
                     <option value="hard" data-i18n="levelHard">強い</option>
                 </select>
             </div>
-            <label class="flex justify-center items-center space-x-1 mb-1 text-xs text-slate-300 cursor-pointer">
-                <input id="follow-cpu" type="checkbox" checked class="accent-sky-500">
-                <span data-i18n="followCpu">CPUの手を追う</span>
-            </label>
+            <div class="flex justify-center items-center space-x-4 mb-1 text-xs text-slate-300">
+                <label class="flex items-center space-x-1 cursor-pointer">
+                    <input id="follow-cpu" type="checkbox" checked class="accent-sky-500">
+                    <span data-i18n="followCpu">CPUの手を追う</span>
+                </label>
+                <button id="btn-demo" class="text-sky-300 hover:text-sky-200 underline underline-offset-2" data-i18n="demo">デモ（CPU同士）</button>
+            </div>
 
             <p class="text-xs text-slate-400 mb-4" data-i18n="ruleLine">石と、囲んだ点の合計が多い方の勝ち</p>
 
@@ -262,6 +265,16 @@
                 resignConfirm: '本当に？',
                 playerResigns: 'あなた：「参りました」',
                 cpuWinsByResign: 'CPUの中押し勝ち',
+                demo: 'デモ（CPU同士）',
+                demoStop: 'デモ終了',
+                demoLabelB: 'CPU（黒）',
+                demoLabelW: 'CPU（白）',
+                blackName: '黒',
+                whiteName: '白',
+                demoPassed: n => `${n}がパスしました`,
+                demoResigns: n => `${n}：「参りました」`,
+                demoWins: n => `${n}の勝ち`,
+                demoWinsByResign: n => `${n}の中押し勝ち`,
                 ruleLine: '石と、囲んだ点の合計が多い方の勝ち',
                 scoringTitle: '地の確認',
                 scoringHelp: '半透明の石は死に石と判定しました。違っていたら石をタップして切り替え、「確定」を押してください。',
@@ -300,6 +313,16 @@
                 resignConfirm: 'Sure?',
                 playerResigns: 'You: "I resign."',
                 cpuWinsByResign: 'CPU wins by resignation',
+                demo: 'Demo (CPU vs CPU)',
+                demoStop: 'Stop demo',
+                demoLabelB: 'CPU (Black)',
+                demoLabelW: 'CPU (White)',
+                blackName: 'Black',
+                whiteName: 'White',
+                demoPassed: n => `${n} passed`,
+                demoResigns: n => `${n}: "I resign."`,
+                demoWins: n => `${n} wins`,
+                demoWinsByResign: n => `${n} wins by resignation`,
                 ruleLine: 'Most stones plus surrounded points wins',
                 scoringTitle: 'Check the result',
                 scoringHelp: 'Faded stones are judged dead. Tap a stone to change it, then press Confirm.',
@@ -336,6 +359,18 @@
         let consecutivePasses = 0;
         let isCPUTurn = false;
         let gameOver = false;
+        // Demo: the CPU plays both colors, games restart by themselves
+        let demoMode = false;
+        let demoTimer = null;
+        const DEMO_MOVE_DELAY = 400; // ms pause before each move (the CPU also thinks for a while)
+        const isCpuColor = (color) => demoMode || color === 'W';
+        let cpuTimer = null;
+        // Let the CPU move after a short pause (cancelled by a reset)
+        function scheduleCPU() {
+            clearTimeout(cpuTimer);
+            cpuTimer = setTimeout(playCPU, demoMode ? DEMO_MOVE_DELAY : 500);
+        }
+        const colorName = (color) => color === 'B' ? t('blackName') : t('whiteName');
         // While checking the result after both passes: the stones judged dead (null otherwise).
         // Kept after confirming so the final board still shows dead stones and territory.
         let scoringDead = null;
@@ -706,6 +741,7 @@
                 const clickedIndex = pickPoint(e.clientX, e.clientY);
 
                 if(clickedIndex >= 0) {
+                    if (demoMode) return;
                     if (scoring) {
                         if (board[clickedIndex] !== null) toggleDead(clickedIndex);
                         return;
@@ -784,7 +820,7 @@
             // --- Move is VALID ---
             positionHistory.add(currentHash);
             lastMove = index;
-            if (currentPlayer === 'W' && followCpuMoves()) focusOn(index);
+            if (isCpuColor(currentPlayer) && followCpuMoves()) focusOn(index);
             consecutivePasses = 0; // Reset pass counter
 
             if(currentPlayer === 'B') captures.B += capturedEnemyStones.length;
@@ -797,10 +833,10 @@
             currentPlayer = enemy;
             updateUI();
 
-            // Trigger CPU if it's White's turn
-            if (currentPlayer === 'W') {
+            // Trigger the CPU if it plays this color
+            if (isCpuColor(currentPlayer)) {
                 isCPUTurn = true;
-                setTimeout(playCPU, 500);
+                scheduleCPU();
             } else {
                 isCPUTurn = false;
             }
@@ -859,9 +895,9 @@
 
         // --- CPU AI ---
         function playCPU() {
-            if (gameOver || scoring || currentPlayer !== 'W') return;
+            if (gameOver || scoring || !isCpuColor(currentPlayer)) return;
             if (cpuLevel === 'easy' || !cpuWorker) {
-                playHeuristic();
+                playHeuristic(currentPlayer);
                 return;
             }
 
@@ -872,7 +908,7 @@
                 token,
                 board,
                 adj,
-                color: 'W',
+                color: currentPlayer,
                 komi,
                 history: [...positionHistory],
                 timeMs: CPU_THINK_MS[cpuLevel]
@@ -880,19 +916,19 @@
         }
 
         // Easy level: one move ahead, scoring captures and liberties
-        function playHeuristic() {
+        function playHeuristic(color) {
             let validMoves = [];
             let bestMove = -1;
             let bestScore = -9999;
 
             for (let i = 0; i < TOTAL_NODES; i++) {
                 if (board[i] !== null) continue;
-                if (isOwnEye(i, 'W')) continue; // Never fill own eyes
+                if (isOwnEye(i, color)) continue; // Never fill own eyes
 
                 // Simulate move
                 let prevBoard = [...board];
-                board[i] = 'W';
-                let enemy = 'B';
+                board[i] = color;
+                let enemy = color === 'B' ? 'W' : 'B';
                 let captured = 0;
 
                 // Check captures
@@ -939,14 +975,15 @@
                 return;
             }
 
-            cpuHasNoMove();
+            cpuHasNoMove(color);
         }
 
         // No useful move left: resign if behind (dead stones not counted), otherwise pass
-        function cpuHasNoMove() {
-            let score = computeScore(estimateDeadStones('W'));
-            if (score.W < score.B) {
-                resign(score);
+        function cpuHasNoMove(color) {
+            let score = computeScore(estimateDeadStones(color));
+            const opponent = color === 'B' ? 'W' : 'B';
+            if (score[color] < score[opponent]) {
+                resign(score, color);
             } else {
                 passTurn();
             }
@@ -1180,7 +1217,7 @@
         let outlookShown = false;
         function updateOutlook() {
             const el = document.getElementById('outlook');
-            if (gameOver || scoring || !playerCannotWin()) {
+            if (gameOver || scoring || demoMode || !playerCannotWin()) {
                 el.classList.add('hidden');
                 return;
             }
@@ -1205,6 +1242,7 @@
             updateScoringPreview();
             updateOutlook();
             showToast(t('gameOver'));
+            if (demoMode) demoTimer = setTimeout(() => { if (scoring) endGame(); }, 2500);
         }
 
         function updateScoringPreview() {
@@ -1233,19 +1271,24 @@
             document.getElementById('btn-resign').classList.remove('hidden');
             updateUI(); // Clear turn highlight and illegal-point markers
             let score = computeScore(scoringDead);
-            let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
+            let winner = demoMode ? t('demoWins')(colorName(score.B > score.W ? 'B' : 'W'))
+                : score.B > score.W ? t('playerWins') : t('cpuWins');
             showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
             updateOutlook(); // Hidden once the result is shown
+            scheduleNextDemoGame();
         }
 
-        function resign(score) {
+        function resign(score, color = 'W') {
             gameOver = true;
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
             updateUI(); // Clear turn highlight and illegal-point markers
-            showResult(`${t('cpuResigns')}\n${t('resultScore')(score.B, score.W, komi)}\n${t('winByResign')}`);
+            const says = demoMode ? t('demoResigns')(colorName(color)) : t('cpuResigns');
+            const winner = demoMode ? t('demoWinsByResign')(colorName(color === 'B' ? 'W' : 'B')) : t('winByResign');
+            showResult(`${says}\n${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
             updateOutlook(); // Hidden once the result is shown
-            showToast(t('cpuResigns'));
+            showToast(says);
+            scheduleNextDemoGame();
         }
 
         // The player gives up: the CPU wins. Score shown with estimated dead stones removed.
@@ -1271,7 +1314,8 @@
         function passTurn() {
             if (gameOver) return;
             consecutivePasses++;
-            let msg = currentPlayer === 'B' ? t('playerPassed') : t('cpuPassed');
+            let msg = demoMode ? t('demoPassed')(colorName(currentPlayer))
+                : currentPlayer === 'B' ? t('playerPassed') : t('cpuPassed');
             currentPlayer = currentPlayer === 'B' ? 'W' : 'B';
             updateUI();
 
@@ -1279,9 +1323,9 @@
                 startScoring();
             } else {
                 showToast(msg);
-                if (currentPlayer === 'W') {
+                if (isCpuColor(currentPlayer)) {
                     isCPUTurn = true;
-                    setTimeout(playCPU, 500);
+                    scheduleCPU();
                 } else {
                     isCPUTurn = false;
                 }
@@ -1300,7 +1344,7 @@
             });
 
             // Illegal points are shown only while Black is to move
-            const showIllegal = !gameOver && !scoring && currentPlayer === 'B';
+            const showIllegal = !gameOver && !scoring && !demoMode && currentPlayer === 'B';
 
             // Last-move dot, on the outside of the stone (hidden if that stone was captured)
             lastMoveMarker.visible = !scoringDead && lastMove >= 0 && board[lastMove] !== null;
@@ -1394,13 +1438,20 @@
                 pnlB.classList.remove('border-blue-400', 'bg-blue-500/20');
             }
 
+            // In the demo both sides are the CPU; the player's buttons do nothing
+            document.querySelector('#pnl-B [data-i18n]').textContent = demoMode ? t('demoLabelB') : t('player');
+            document.querySelector('#pnl-W [data-i18n]').textContent = demoMode ? t('demoLabelW') : t('cpu');
+            ['btn-pass', 'btn-resign'].forEach(id =>
+                document.getElementById(id).classList.toggle('opacity-40', demoMode));
+            document.getElementById('btn-demo').textContent = demoMode ? t('demoStop') : t('demo');
+
             updateBoardVisuals(); // Illegal-point markers depend on whose turn it is
         }
 
         // UI Buttons
         document.getElementById('btn-pass').addEventListener('click', () => {
             // Only the player (Black) may press Pass, and only on their own turn
-            if (gameOver || scoring || isCPUTurn || currentPlayer !== 'B') return;
+            if (gameOver || scoring || demoMode || isCPUTurn || currentPlayer !== 'B') return;
             passTurn();
         });
 
@@ -1412,7 +1463,7 @@
             resignButton.textContent = t('resign');
         }
         resignButton.addEventListener('click', () => {
-            if (gameOver || scoring) return;
+            if (gameOver || scoring || demoMode) return;
             if (!resignArmed) {
                 resignButton.textContent = t('resignConfirm');
                 resignArmed = setTimeout(disarmResign, 3000);
@@ -1426,7 +1477,9 @@
             if (scoring) endGame();
         });
 
-        document.getElementById('btn-reset').addEventListener('click', () => {
+        function resetGame(silent = false) {
+            clearTimeout(cpuTimer);
+            clearTimeout(demoTimer);
             board.fill(null);
             currentPlayer = 'B';
             isCPUTurn = false;
@@ -1450,8 +1503,33 @@
             document.getElementById('result').classList.add('hidden');
             updateBoardVisuals();
             updateUI();
-            showToast(t('gameReset'));
+            if (!silent) showToast(t('gameReset'));
+        }
+
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            demoMode = false; // Reset also ends the demo
+            resetGame();
         });
+
+        // --- DEMO (CPU vs CPU) ---
+        function startDemoGame() {
+            resetGame(true);
+            isCPUTurn = true;
+            scheduleCPU(); // Black moves first
+        }
+        function scheduleNextDemoGame() {
+            if (demoMode) demoTimer = setTimeout(startDemoGame, 6000); // Show the result, then go again
+        }
+        function setDemo(on) {
+            demoMode = on;
+            if (on) startDemoGame();
+            else resetGame(true);
+        }
+        document.getElementById('btn-demo').addEventListener('click', () => setDemo(!demoMode));
+        // ?demo in the URL starts the demo right away (for sharing and recording)
+        if (new URLSearchParams(location.search).has('demo')) {
+            window.addEventListener('load', () => setDemo(true));
+        }
 
         // Komi can be changed mid-game; it is read when the score is computed
         const komiSelect = document.getElementById('komi-select');
@@ -1498,13 +1576,14 @@
                 const { token, move } = e.data;
                 if (token !== cpuToken) return;
                 setThinking(false);
-                if (gameOver || scoring || currentPlayer !== 'W') return;
+                if (gameOver || scoring || !isCpuColor(currentPlayer)) return;
+                const color = currentPlayer;
                 if (move < 0) {
-                    cpuHasNoMove();
+                    cpuHasNoMove(color);
                     return;
                 }
                 attemptMove(move);
-                if (currentPlayer === 'W') playHeuristic(); // Should not happen; never leave the CPU stuck
+                if (currentPlayer === color) playHeuristic(color); // Should not happen; never leave the CPU stuck
             };
         }
 
