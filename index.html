@@ -112,8 +112,6 @@
     <!-- Three.js and OrbitControls -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/ConvexHull.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/ConvexGeometry.js"></script>
 
     <!-- Monte Carlo CPU, run as a Web Worker so the page stays responsive -->
     <script type="text/worker" id="cpu-worker">
@@ -330,6 +328,8 @@
         let komi = 3.5;
 
         // --- GRAPH DATA ---
+        let pentagons = []; // 12 faces, each a list of 5 point indices
+        let hexagons = [];  // 20 faces, each a list of 6 point indices
         let points = []; // 60 THREE.Vector3
         let adj = Array.from({length: TOTAL_NODES}, () => []);
 
@@ -373,49 +373,26 @@
             color: 0xef4444, side: THREE.BackSide
         });
         
-        // Procedural Wood Texture generator
-        function createWoodTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 512; canvas.height = 512;
-            const ctx = canvas.getContext('2d');
-            
-            // Base wood color
-            ctx.fillStyle = '#d4a373';
-            ctx.fillRect(0, 0, 512, 512);
-            
-            // Grain rings
-            ctx.lineWidth = 1.5;
-            for(let i = 0; i < 150; i++) {
-                ctx.beginPath();
-                let x = 256 + (Math.random() - 0.5) * 800;
-                let y = 256 + (Math.random() - 0.5) * 800;
-                let r = 50 + i * 5 + Math.random() * 15;
-                ctx.arc(x, y, r, 0, Math.PI * 2);
-                ctx.strokeStyle = `rgba(139, 90, 43, ${Math.random() * 0.15 + 0.05})`;
-                ctx.stroke();
-            }
-            
-            // Fine noise for texture depth
-            const imgData = ctx.getImageData(0, 0, 512, 512);
-            for(let i = 0; i < imgData.data.length; i += 4) {
-                let noise = (Math.random() - 0.5) * 20;
-                imgData.data[i] += noise;
-                imgData.data[i+1] += noise;
-                imgData.data[i+2] += noise;
-            }
-            ctx.putImageData(imgData, 0, 0);
-            
-            let tex = new THREE.CanvasTexture(canvas);
-            tex.anisotropy = 4;
-            return tex;
-        }
-
-        const matWood = new THREE.MeshStandardMaterial({
-            map: createWoodTexture(),
-            roughness: 0.9, 
-            metalness: 0.0,
-            flatShading: true // Highlights the flat faces of pentagons and hexagons
+        // Board faces: dark wood for the 12 pentagons, light wood for the 20 hexagons
+        // (ambientCG Wood027 / Wood095, CC0). A plain wood color shows until the image loads.
+        const matPentagon = new THREE.MeshStandardMaterial({
+            color: 0x4a2c1a, roughness: 0.8, metalness: 0.0, flatShading: true
         });
+        const matHexagon = new THREE.MeshStandardMaterial({
+            color: 0xd8ad7c, roughness: 0.8, metalness: 0.0, flatShading: true
+        });
+        function applyWoodTexture(material, url) {
+            new THREE.TextureLoader().load(url, (tex) => {
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+                tex.repeat.set(1, tex.image.width / tex.image.height); // Keep the grain's proportions
+                tex.anisotropy = 4;
+                material.map = tex;
+                material.color.set(0xffffff);
+                material.needsUpdate = true;
+            });
+        }
+        applyWoodTexture(matPentagon, 'textures/wood_dark.jpg');
+        applyWoodTexture(matHexagon, 'textures/wood_light.jpg');
 
         // Initialize App
         window.onload = () => {
@@ -439,21 +416,43 @@
 
             // 2. Find the 30 edges of Icosahedron (distance = 2)
             let edges = [];
+            const isEdge = (i, j) => Math.abs(icosaV[i].distanceTo(icosaV[j]) - 2.0) < 0.05;
             for(let i = 0; i < 12; i++){
                 for(let j = i + 1; j < 12; j++){
-                    if(Math.abs(icosaV[i].distanceTo(icosaV[j]) - 2.0) < 0.05){
-                        edges.push([icosaV[i], icosaV[j]]);
+                    if(isEdge(i, j)){
+                        edges.push([i, j]);
                     }
                 }
             }
 
             // 3. Truncate edges at 1/3 and 2/3 to get 60 vertices
             const SCALE = 4; // Make the ball bigger
-            edges.forEach(edge => {
-                let p1 = edge[0].clone().lerp(edge[1], 1/3).multiplyScalar(SCALE);
-                let p2 = edge[0].clone().lerp(edge[1], 2/3).multiplyScalar(SCALE);
+            let edgePoints = {}; // "i-j" -> the two points on that icosahedron edge
+            let pentagonOf = Array.from({length: 12}, () => []);
+            edges.forEach(([i, j]) => {
+                let p1 = icosaV[i].clone().lerp(icosaV[j], 1/3).multiplyScalar(SCALE);
+                let p2 = icosaV[i].clone().lerp(icosaV[j], 2/3).multiplyScalar(SCALE);
                 points.push(p1, p2);
+                let n = points.length;
+                edgePoints[`${i}-${j}`] = [n - 2, n - 1];
+                // Each cut point belongs to the pentagon around its nearer icosahedron vertex
+                pentagonOf[i].push(n - 2);
+                pentagonOf[j].push(n - 1);
             });
+            pentagons = pentagonOf;
+
+            // Each icosahedron triangle becomes a hexagon of the 6 points on its edges
+            for(let i = 0; i < 12; i++){
+                for(let j = i + 1; j < 12; j++){
+                    for(let k = j + 1; k < 12; k++){
+                        if(isEdge(i, j) && isEdge(j, k) && isEdge(i, k)){
+                            hexagons.push([
+                                ...edgePoints[`${i}-${j}`], ...edgePoints[`${j}-${k}`], ...edgePoints[`${i}-${k}`]
+                            ]);
+                        }
+                    }
+                }
+            }
 
             // 4. Calculate Adjacency list (distance between neighbors is ~ 2.666 when scaled by 4)
             const targetDist = (2/3) * SCALE;
@@ -507,11 +506,9 @@
             dirLight2.position.set(-10, -10, -10);
             scene.add(dirLight2);
 
-            // Create Truncated Icosahedron (Buckyball) solid faces
-            // ConvexGeometry safely wraps the 60 vertices into exactly 12 pentagons and 20 hexagons
-            const hullGeo = new THREE.ConvexGeometry(points);
-            const boardMesh = new THREE.Mesh(hullGeo, matWood);
-            scene.add(boardMesh);
+            // Truncated icosahedron (soccer ball) faces: pentagons and hexagons in separate woods
+            scene.add(new THREE.Mesh(buildFaces(pentagons), matPentagon));
+            scene.add(new THREE.Mesh(buildFaces(hexagons), matHexagon));
 
             // Draw Edges (Cylinders)
             let drawnEdges = new Set();
@@ -565,6 +562,49 @@
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 fitCamera();
             });
+        }
+
+        // Flat polygons as a triangle fan, with UVs projected onto each face's own plane.
+        // Every face gets a random grain direction and offset so no two pieces look alike.
+        function buildFaces(faces) {
+            const UV_SCALE = 1 / 8; // One texture width covers 8 units (a hexagon is about 5 wide)
+            let positions = [];
+            let uvs = [];
+            faces.forEach(face => {
+                let center = new THREE.Vector3();
+                face.forEach(i => center.add(points[i]));
+                center.divideScalar(face.length);
+                let normal = center.clone().normalize();
+
+                // Axes on the face plane, turned by a random angle
+                let axisU = points[face[0]].clone().sub(center).projectOnPlane(normal).normalize();
+                axisU.applyAxisAngle(normal, Math.random() * Math.PI * 2);
+                let axisV = new THREE.Vector3().crossVectors(normal, axisU);
+                let offset = [Math.random(), Math.random()];
+
+                // Order the corners around the center
+                let sorted = [...face].sort((a, b) => {
+                    let da = points[a].clone().sub(center), db = points[b].clone().sub(center);
+                    return Math.atan2(da.dot(axisV), da.dot(axisU)) - Math.atan2(db.dot(axisV), db.dot(axisU));
+                });
+
+                const uvOf = (p) => {
+                    let d = p.clone().sub(center);
+                    return [d.dot(axisU) * UV_SCALE + offset[0], d.dot(axisV) * UV_SCALE + offset[1]];
+                };
+                for (let k = 0; k < sorted.length; k++) {
+                    let a = points[sorted[k]], b = points[sorted[(k + 1) % sorted.length]];
+                    [center, a, b].forEach(p => {
+                        positions.push(p.x, p.y, p.z);
+                        uvs.push(...uvOf(p));
+                    });
+                }
+            });
+            let geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+            geo.computeVertexNormals();
+            return geo;
         }
 
         // Fit the whole ball into the screen area below the UI panel, on any aspect ratio
