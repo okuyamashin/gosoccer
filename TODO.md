@@ -29,6 +29,7 @@
 - `textures/panorama_engawa_chatgpt.jpg` / `textures/panorama_engawa_gemini.jpg`（背景。使用中は Gemini 版、ChatGPT 版は候補として保管）: ChatGPT と Gemini で生成した、縁側から日本庭園と和室を見る360度パノラマ（正距円筒図法）。2048×1024px の JPEG に縮小。
   - 元画像は `source_images/` に保管（.gitignore で公開対象外）。
 
+- 動画の曲「Go Soccer — No Place to Corner Me」（`video/music/`、Git には入れていない）: Shin Okuyama 作詞、Suno の有料プランで作成。著作権は Shin Okuyama。
 - `og-image.jpg`（SNSのリンクプレビュー用、1200×630px）: ゲーム画面をヘッドレス Chrome で撮影し、タイトルを重ねたもの。
 
 ## やりたいこと
