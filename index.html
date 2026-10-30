@@ -677,8 +677,6 @@
         }
 
         function setupInteraction() {
-            const raycaster = new THREE.Raycaster();
-            const mouse = new THREE.Vector2();
             let pointerDownPos = {x: 0, y: 0};
 
             renderer.domElement.addEventListener('pointerdown', (e) => {
@@ -691,17 +689,11 @@
                 // Ignore if it was a drag (rotating camera)
                 let dx = e.clientX - pointerDownPos.x;
                 let dy = e.clientY - pointerDownPos.y;
-                if(Math.sqrt(dx*dx + dy*dy) > 5) return;
+                if(Math.sqrt(dx*dx + dy*dy) > 10) return; // Allow some finger wobble on touch screens
 
-                // Raycast
-                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                const clickedIndex = pickPoint(e.clientX, e.clientY);
 
-                raycaster.setFromCamera(mouse, camera);
-                const intersects = raycaster.intersectObjects(nodeMeshes);
-
-                if(intersects.length > 0) {
-                    let clickedIndex = intersects[0].object.userData.index;
+                if(clickedIndex >= 0) {
                     if (scoring) {
                         if (board[clickedIndex] !== null) toggleDead(clickedIndex);
                         return;
@@ -712,6 +704,28 @@
                     }
                 }
             });
+        }
+
+        // The point on the visible side of the ball nearest to the click on screen. The click
+        // must be within half the on-screen distance to that point's nearest neighbor, so
+        // clicks near the middle of a face pick nothing. Returns -1 if nothing is picked.
+        function pickPoint(clientX, clientY) {
+            const toScreen = (v) => {
+                const p = v.clone().project(camera);
+                return [(p.x + 1) / 2 * window.innerWidth, (1 - p.y) / 2 * window.innerHeight];
+            };
+            const screenDist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+            let best = -1, bestDist = Infinity;
+            for (let i = 0; i < TOTAL_NODES; i++) {
+                const toCamera = camera.position.clone().sub(points[i]);
+                if (points[i].dot(toCamera) <= 0) continue; // On the far side of the ball
+                const d = screenDist(toScreen(points[i]), [clientX, clientY]);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            if (best < 0) return -1;
+            const here = toScreen(points[best]);
+            const nearestNeighbor = Math.min(...adj[best].map(n => screenDist(here, toScreen(points[n]))));
+            return bestDist <= nearestNeighbor / 2 ? best : -1;
         }
 
         // --- GO LOGIC ---
