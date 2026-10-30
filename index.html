@@ -93,10 +93,11 @@
 
             <p id="result" class="hidden mb-4 px-2 py-2 rounded-lg bg-emerald-500/20 border border-emerald-400 text-sm font-bold whitespace-pre-line"></p>
 
-            <div class="flex space-x-3 justify-center">
-                <button id="btn-pass" class="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg" data-i18n="pass">パス</button>
-                <button id="btn-confirm" class="hidden flex-1 bg-sky-700 hover:bg-sky-600 active:bg-sky-800 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg" data-i18n="confirm">確定</button>
-                <button id="btn-reset" class="flex-1 bg-red-900 hover:bg-red-800 active:bg-red-950 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg" data-i18n="reset">リセット</button>
+            <div class="flex space-x-2 justify-center">
+                <button id="btn-pass" class="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-semibold py-2 px-2 rounded-xl transition shadow-lg whitespace-nowrap" data-i18n="pass">パス</button>
+                <button id="btn-resign" class="flex-1 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 text-white font-semibold py-2 px-2 rounded-xl transition shadow-lg whitespace-nowrap" data-i18n="resign">参りました</button>
+                <button id="btn-confirm" class="hidden flex-1 bg-sky-700 hover:bg-sky-600 active:bg-sky-800 text-white font-semibold py-2 px-2 rounded-xl transition shadow-lg whitespace-nowrap" data-i18n="confirm">確定</button>
+                <button id="btn-reset" class="flex-1 bg-red-900 hover:bg-red-800 active:bg-red-950 text-white font-semibold py-2 px-2 rounded-xl transition shadow-lg whitespace-nowrap" data-i18n="reset">リセット</button>
             </div>
         </div>
     </div>
@@ -242,6 +243,10 @@
                 gameReset: 'リセットしました',
                 cpuResigns: 'CPU：「参りました」',
                 winByResign: 'あなたの中押し勝ち',
+                resign: '参りました',
+                resignConfirm: '本当に？',
+                playerResigns: 'あなた：「参りました」',
+                cpuWinsByResign: 'CPUの中押し勝ち',
                 ruleLine: '石と、囲んだ点の合計が多い方の勝ち',
                 scoringTitle: '地の確認',
                 scoringHelp: '半透明の石は死に石と判定しました。違っていたら石をタップして切り替え、「確定」を押してください。',
@@ -276,6 +281,10 @@
                 gameReset: 'Game Reset',
                 cpuResigns: 'CPU: "I resign."',
                 winByResign: 'You win by resignation',
+                resign: 'Resign',
+                resignConfirm: 'Sure?',
+                playerResigns: 'You: "I resign."',
+                cpuWinsByResign: 'CPU wins by resignation',
                 ruleLine: 'Most stones plus surrounded points wins',
                 scoringTitle: 'Check the result',
                 scoringHelp: 'Faded stones are judged dead. Tap a stone to change it, then press Confirm.',
@@ -1080,6 +1089,7 @@
             scoringDead = estimateDeadStones('B');
             document.getElementById('scoring').classList.remove('hidden');
             document.getElementById('btn-pass').classList.add('hidden');
+            document.getElementById('btn-resign').classList.add('hidden');
             document.getElementById('btn-confirm').classList.remove('hidden');
             updateUI();
             updateScoringPreview();
@@ -1110,6 +1120,7 @@
             document.getElementById('scoring').classList.add('hidden');
             document.getElementById('btn-confirm').classList.add('hidden');
             document.getElementById('btn-pass').classList.remove('hidden');
+            document.getElementById('btn-resign').classList.remove('hidden');
             updateUI(); // Clear turn highlight and illegal-point markers
             let score = computeScore(scoringDead);
             let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
@@ -1125,6 +1136,20 @@
             showResult(`${t('cpuResigns')}\n${t('resultScore')(score.B, score.W, komi)}\n${t('winByResign')}`);
             updateOutlook(); // Hidden once the result is shown
             showToast(t('cpuResigns'));
+        }
+
+        // The player gives up: the CPU wins. Score shown with estimated dead stones removed.
+        function playerResign() {
+            const score = computeScore(estimateDeadStones(currentPlayer));
+            cpuToken++; // Ignore a move the CPU may still be thinking about
+            setThinking(false);
+            gameOver = true;
+            isCPUTurn = false;
+            komiSelect.disabled = true; // Result is final
+            updateUI(); // Clear turn highlight and illegal-point markers
+            showResult(`${t('playerResigns')}\n${t('resultScore')(score.B, score.W, komi)}\n${t('cpuWinsByResign')}`);
+            updateOutlook(); // Hidden once the result is shown
+            showToast(t('playerResigns'));
         }
 
         function showResult(text) {
@@ -1269,6 +1294,24 @@
             passTurn();
         });
 
+        const resignButton = document.getElementById('btn-resign');
+        let resignArmed = null; // Timer while waiting for the second tap
+        function disarmResign() {
+            clearTimeout(resignArmed);
+            resignArmed = null;
+            resignButton.textContent = t('resign');
+        }
+        resignButton.addEventListener('click', () => {
+            if (gameOver || scoring) return;
+            if (!resignArmed) {
+                resignButton.textContent = t('resignConfirm');
+                resignArmed = setTimeout(disarmResign, 3000);
+                return;
+            }
+            disarmResign();
+            playerResign();
+        });
+
         document.getElementById('btn-confirm').addEventListener('click', () => {
             if (scoring) endGame();
         });
@@ -1285,10 +1328,12 @@
             scoringDead = null;
             lastMove = -1;
             cpuToken++; // Drop any answer the CPU is still working on
+            disarmResign();
             setThinking(false);
             document.getElementById('scoring').classList.add('hidden');
             document.getElementById('btn-confirm').classList.add('hidden');
             document.getElementById('btn-pass').classList.remove('hidden');
+            document.getElementById('btn-resign').classList.remove('hidden');
             komiSelect.disabled = false; // Keep the chosen komi for the next game
             outlookShown = false;
             updateOutlook();
