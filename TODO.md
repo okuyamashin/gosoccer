@@ -26,6 +26,8 @@
 - `textures/wood_dark.jpg`（五角形）: ambientCG「Wood027」の Color マップを 512px に縮小。
 - `textures/wood_light.jpg`（六角形）: ambientCG「Wood095」の Color マップを 512×256px に縮小。
 - ライセンス: CC0 1.0（クレジット表記は不要。https://docs.ambientcg.com/license/ ）
+- `textures/panorama_engawa_chatgpt.jpg` / `textures/panorama_engawa_gemini.jpg`（背景候補）: ChatGPT と Gemini で生成した、縁側から日本庭園と和室を見る360度パノラマ（正距円筒図法）。2048×1024px の JPEG に縮小。
+  - 元画像は `source_images/` に保管（.gitignore で公開対象外）。
 
 ## やりたいこと
 
