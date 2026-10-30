@@ -62,6 +62,16 @@
                 </div>
             </div>
 
+            <div class="flex justify-center items-center space-x-2 mb-4 text-sm">
+                <label for="komi-select" class="text-slate-300" data-i18n="komi">コミ（白）</label>
+                <select id="komi-select" class="bg-slate-700 text-white font-semibold rounded-lg px-2 py-1 disabled:opacity-50">
+                    <option value="1.5">1.5</option>
+                    <option value="3.5" selected>3.5</option>
+                    <option value="5.5">5.5</option>
+                    <option value="7.5">7.5</option>
+                </select>
+            </div>
+
             <p id="result" class="hidden mb-4 px-2 py-2 rounded-lg bg-emerald-500/20 border border-emerald-400 text-sm font-bold whitespace-pre-line"></p>
 
             <div class="flex space-x-3 justify-center">
@@ -108,7 +118,9 @@
                 resultResign: 'CPU：「参りました」\nあなたの中押し勝ち',
                 resultScore: (b, w, k) => `黒 ${b} 対 白 ${w}（コミ ${k} 込み）`,
                 playerWins: 'あなたの勝ち',
-                cpuWins: 'CPUの勝ち'
+                cpuWins: 'CPUの勝ち',
+                komi: 'コミ（白）',
+                komiChanged: k => `コミを ${k} 目にしました`
             },
             en: {
                 docTitle: 'Go Soccer',
@@ -129,7 +141,9 @@
                 resultResign: 'CPU: "I resign."\nYou win by resignation',
                 resultScore: (b, w, k) => `Black ${b} – White ${w} (incl. komi ${k})`,
                 playerWins: 'You win',
-                cpuWins: 'CPU wins'
+                cpuWins: 'CPU wins',
+                komi: 'Komi (White)',
+                komiChanged: k => `Komi set to ${k}`
             }
         };
         function t(key) { return TEXT[LANG][key]; }
@@ -150,7 +164,9 @@
         let consecutivePasses = 0;
         let isCPUTurn = false;
         let gameOver = false;
-        const KOMI = 3.5; // Provisional (see TODO.md K2)
+        // Komi for White. Default 3.5; can be changed from the panel at any time until the game ends.
+        // Values step by 2 because the area-score margin is always even (see TODO.md K2).
+        let komi = 3.5;
 
         // --- GRAPH DATA ---
         let points = []; // 60 THREE.Vector3
@@ -579,7 +595,7 @@
 
         // --- SCORING (area scoring: stones + surrounded empty points, komi to White) ---
         function computeScore() {
-            let score = { B: 0, W: KOMI };
+            let score = { B: 0, W: komi };
             let visited = new Set();
             for (let i = 0; i < TOTAL_NODES; i++) {
                 if (board[i] !== null) {
@@ -618,15 +634,17 @@
         function endGame() {
             gameOver = true;
             isCPUTurn = false;
+            komiSelect.disabled = true; // Result is final
             let score = computeScore();
             let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
-            showResult(`${t('resultScore')(score.B, score.W, KOMI)}\n${winner}`);
+            showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
             showToast(t('gameOver'));
         }
 
         function resign() {
             gameOver = true;
             isCPUTurn = false;
+            komiSelect.disabled = true; // Result is final
             showResult(t('resultResign'));
             showToast(t('cpuResigns'));
         }
@@ -710,10 +728,18 @@
             positionHistory = new Set([boardKey(board)]);
             consecutivePasses = 0;
             gameOver = false;
+            komiSelect.disabled = false; // Keep the chosen komi for the next game
             document.getElementById('result').classList.add('hidden');
             updateBoardVisuals();
             updateUI();
             showToast(t('gameReset'));
+        });
+
+        // Komi can be changed mid-game; it is read when the score is computed
+        const komiSelect = document.getElementById('komi-select');
+        komiSelect.addEventListener('change', () => {
+            komi = parseFloat(komiSelect.value);
+            showToast(t('komiChanged')(komi));
         });
 
         // Toast Notification System
