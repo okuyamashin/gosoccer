@@ -336,6 +336,8 @@
         // --- THREE.JS GLOBALS ---
         let scene, camera, renderer, controls;
         let lastMoveMarker;
+        let backgroundSphere;
+        let initialCameraTurn = null; // Camera orientation at start, to measure how far the view has turned
         let lastMove = -1;     // Index of the most recent stone, -1 if none
         let focusAnim = null;  // Running camera turn toward a point, or null
         let nodeMeshes = [];
@@ -506,6 +508,10 @@
             dirLight2.position.set(-10, -10, -10);
             scene.add(dirLight2);
 
+            // 360-degree background: the view from an engawa over a Japanese garden
+            backgroundSphere = createBackground();
+            scene.add(backgroundSphere);
+
             // Truncated icosahedron (soccer ball) faces: pentagons and hexagons in separate woods
             scene.add(new THREE.Mesh(buildFaces(pentagons), matPentagon));
             scene.add(new THREE.Mesh(buildFaces(hexagons), matHexagon));
@@ -562,6 +568,38 @@
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 fitCamera();
             });
+        }
+
+        // --- BACKGROUND ---
+        // How much the background turns when the ball is turned: 1 = like a real room around
+        // the ball (full 3D feel), 0 = fixed on screen. Lower it if the motion feels too strong.
+        const BACKGROUND_TURN = 1.0;
+        const BACKGROUND_BRIGHTNESS = 0xc0c0c0; // Darkened a little so the board stands out
+
+        // Equirectangular panorama (pre-blurred) on a large sphere seen from inside.
+        // Generated with Gemini; see TODO.md "使用素材".
+        function createBackground() {
+            const geo = new THREE.SphereGeometry(80, 64, 32);
+            geo.scale(-1, 1, 1);         // Seen from inside, so flip it to keep the picture unmirrored
+            geo.rotateY(-Math.PI / 2);   // Garden (image center) behind the ball at the start
+            const mat = new THREE.MeshBasicMaterial({ color: 0x0f172a, fog: false, depthWrite: false });
+            new THREE.TextureLoader().load('textures/background_engawa.jpg', (tex) => {
+                mat.map = tex;
+                mat.color.set(BACKGROUND_BRIGHTNESS);
+                mat.needsUpdate = true;
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.renderOrder = -1;
+            return mesh;
+        }
+
+        // Keep the background centered on the camera (infinitely far away) and let it
+        // follow the camera's turn by (1 - BACKGROUND_TURN)
+        function updateBackground() {
+            if (!initialCameraTurn) initialCameraTurn = camera.quaternion.clone().invert();
+            backgroundSphere.position.copy(camera.position);
+            const turned = camera.quaternion.clone().multiply(initialCameraTurn);
+            backgroundSphere.quaternion.copy(new THREE.Quaternion().slerp(turned, 1 - BACKGROUND_TURN));
         }
 
         // Flat polygons as a triangle fan, with UVs projected onto each face's own plane.
@@ -1487,6 +1525,7 @@
             requestAnimationFrame(animate);
             if (focusAnim) stepFocus();
             controls.update(); // Required for damping
+            updateBackground();
             renderer.render(scene, camera);
         }
 
