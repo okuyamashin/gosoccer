@@ -1,9 +1,11 @@
 // Records the explainer video of the published game with headless Chrome.
 // Captions are drawn as HTML on top of the game, so the video shows exactly what the
-// page renders. Output: out/gosoccer.mp4 (1920x1080, no audio; music is added later).
+// page renders. Scene timing follows the song in music/ (see the timeline below).
+// Output: out/gosoccer.mp4 (1920x1080, no audio). Then add the song with mix.mjs.
 //
 //   npm install          (once; uses the installed Google Chrome and a bundled ffmpeg)
 //   node record.mjs
+//   node mix.mjs music/no_place_to_corner_me.mp3   ->  out/gosoccer_music.mp4
 
 import puppeteer from 'puppeteer-core';
 import { execFileSync } from 'node:child_process';
@@ -134,51 +136,85 @@ await page.evaluate(() => {
 
 const recorder = await page.screencast({ path: `${OUT}raw.webm`, ffmpegPath });
 
-// 1. Title
-await page.evaluate(() => {
+// Scenes follow the song "Go Soccer — No Place to Corner Me" (music/, 1:36).
+// Times are seconds from the start of the song, read off its loudness:
+// spoken intro 0-9, beat drops 10.5, break 40.5-43, verse 2 + hook 43-73.5, ending from 76.
+const t0 = Date.now();
+const at = (sec) => sleep(Math.max(0, t0 + sec * 1000 - Date.now()));
+const scene = (fn, arg) => page.evaluate(fn, arg);
+
+// Intro (spoken, no drums): title, with the spoken lines
+await scene(() => {
     v.shift(0.24);
     v.spin(1.2);
     v.title('<div class="big">囲碁サッカー</div><div class="mid">Go Soccer</div>' +
         '<div class="small">サッカーボールで打つ囲碁 / Go on a soccer ball</div>');
 });
-await sleep(5500);
+const intro = [
+    [0.2, 'サッカーボールを用意して', 'Take a soccer ball.'],
+    [2.0, '囲碁を打とう', 'Play Go.'],
+    [3.3, 'お願いだから', 'Please—'],
+    [5.3, '蹴らないで', "don't kick it."],
+    [8.0, '', '']
+];
+for (const [sec, ja, en] of intro) {
+    await at(sec);
+    await scene(([ja, en]) => v.caption(ja, en), [ja, en]);
+}
 
-// 2. The board: the 60 corners of a soccer ball
-await page.evaluate(() => {
+// Beat drops: the board
+await at(10.5);
+await scene(() => {
     v.title('');
     v.shift(0);
+    v.spin(4);
     v.mark([...Array(60).keys()], 0x38bdf8);
     v.caption('盤はサッカーボールの 60 の交点', 'The board: the 60 corners of a soccer ball');
 });
-await sleep(6500);
 
-// 3. No corners, no edges: every point has 3 liberties
-await page.evaluate(() => {
+// Three liberties, atari, capture
+await at(17.5);
+await scene(() => {
     v.view();
     v.clearBoard();
     const p = v.front()[0];
     window.vp = p;
     v.set({ [p]: 'B' });
     v.mark(adj[p], 0x38bdf8);
-    v.caption('隅も辺もない。呼吸点はどこでも 3 つ', 'No corners, no edges. Every point has 3 liberties');
+    v.caption('呼吸点はどこでも 3 つ', 'Every point has 3 liberties');
 });
-await sleep(4500);
-await page.evaluate(() => {
+await at(23.5);
+await scene(() => {
     v.set({ [adj[vp][0]]: 'W', [adj[vp][1]]: 'W' });
     v.mark([adj[vp][2]], 0x38bdf8);
     v.caption('2 つ囲まれたらアタリ', 'Two stones around it: atari');
 });
-await sleep(3500);
-await page.evaluate(() => {
+await at(27.5);
+await scene(() => {
     currentPlayer = 'W';
     attemptMove(adj[vp][2]);
     v.caption('3 つ目で取れる。勝負は速い', 'The third one captures it. Games are fast');
 });
-await sleep(4000);
 
-// 4. CPU vs CPU
-await page.evaluate(() => {
+// No corners, no edges: spin it
+await at(32);
+await scene(() => {
+    v.spin(6);
+    v.caption('隅も辺もない。逃げ場はどこにもない', 'No corners, no edges. No place to hide');
+});
+
+// Break: breathe
+await at(40.5);
+await scene(() => {
+    v.spin(0.8);
+    v.caption('');
+});
+
+// Verse 2 and hook: CPU vs CPU
+await at(43);
+await scene(() => {
     v.clearBoard();
+    v.view();
     const level = document.getElementById('level-select');
     level.value = 'easy';
     level.dispatchEvent(new Event('change'));
@@ -187,11 +223,22 @@ await page.evaluate(() => {
     setDemo(true);
     v.caption('CPU 同士の対局（デモ）', 'CPU vs CPU demo');
 });
-await sleep(16000);
+await at(58);
+await scene(() => v.caption('球を回して、裏側までチェック', 'Spin it, check the other side'));
 
-// 5. "I resign."
-await page.evaluate(() => {
+// Drums thin out: wind down
+await at(73.5);
+await scene(() => {
     setDemo(false);
+    v.clearBoard();
+    v.caption('');
+    v.view();
+    v.spin(1.2);
+});
+
+// "...I resign."
+await at(76);
+await scene(() => {
     v.clearBoard();
     v.view(26);
     v.shift(-0.2);
@@ -207,10 +254,10 @@ await page.evaluate(() => {
     document.getElementById('toast').classList.add('hidden');
     v.caption('負けそうになると、CPU は「参りました」', 'When it is losing, the CPU says "I resign."');
 });
-await sleep(6000);
 
-// 6. End card
-await page.evaluate(() => {
+// End card
+await at(86);
+await scene(() => {
     v.panel(false);
     v.caption('');
     v.clearBoard();
@@ -221,7 +268,7 @@ await page.evaluate(() => {
         '<div class="small">Play it in your browser</div>' +
         '<div class="mid" style="margin-top:40px;font-size:56px">okuyamashin.github.io/gosoccer</div>');
 });
-await sleep(6000);
+await at(96.5);
 
 await recorder.stop();
 await browser.close();

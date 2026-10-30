@@ -34,11 +34,11 @@
 ## やりたいこと
 
 ### Y6. 説明動画を作って YouTube に上げ、GitHub から見られるようにする（進行中）
-- 字幕だけの動画（約53秒、1920×1080、音なし）を `video/record.mjs` で自動作成済み。公開ページをヘッドレス Chrome で動かして録画し、日英の字幕を重ねている。
-  - 構成: タイトル → 盤は60の交点 → 呼吸点は3つ・アタリ・取る → CPU同士のデモ → 「参りました」 → 遊べるURL
-  - 作り直し: `cd video && npm install && node record.mjs`（出力は `video/out/gosoccer.mp4`。Git には入れない）
-- 音楽は本人が作る。できたら `node mix.mjs 音楽ファイル` で合成（動画の長さで切り、最後の3秒をフェードアウト）→ `video/out/gosoccer_music.mp4`
-- 残り: 音楽の合成 → 本人が YouTube にアップロード → README に動画のサムネイルとリンクを追加。
+- 曲「Go Soccer — No Place to Corner Me」（Suno で作成、1分36秒）に合わせた動画を自動作成済み: `video/out/gosoccer_music.mp4`（1920×1080、日英の字幕）。
+  - 曲は `video/music/no_place_to_corner_me.mp3`（公開リポジトリには入れない。.gitignore 済み）。歌詞は `video/lyrics.md`。
+  - 場面は曲の音量から読み取った区切りに合わせた: 語りのイントロ 0〜9秒（語りの字幕付き）→ 10.5秒でビート、盤の説明 → 32秒「逃げ場はない」で高速回転 → 40.5秒ブレイク → 43秒からCPU同士のデモ → 76秒「参りました」 → 86秒 遊べるURL。実際の切り替えは区切りより0.3〜0.6秒早い。
+  - 作り直し: `cd video && node record.mjs && node mix.mjs music/no_place_to_corner_me.mp3`
+- 残り: 本人が YouTube にアップロード → README に動画のサムネイルとリンクを追加。
 - メモ: Homebrew の ffmpeg は、このパソコンでは Python 3.15 のビルドに失敗して入らなかった（Xcode のコマンドラインツールが古い）。そのため npm の ffmpeg-static を `video/` の中だけで使っている。
 
 ## 既知の不具合
