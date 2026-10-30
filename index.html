@@ -63,18 +63,24 @@
             </div>
 
             <div class="flex justify-center items-center space-x-2 mb-1 text-sm">
-                <label for="komi-select" class="text-slate-300" data-i18n="komi">コミ（白）</label>
+                <label for="komi-select" class="text-slate-300 whitespace-nowrap" data-i18n="komi">コミ（白）</label>
                 <select id="komi-select" class="bg-slate-700 text-white font-semibold rounded-lg px-2 py-1 disabled:opacity-50">
                     <option value="1.5">1.5</option>
                     <option value="3.5" selected>3.5</option>
                     <option value="5.5">5.5</option>
                     <option value="7.5">7.5</option>
                 </select>
-                <label class="flex items-center space-x-1 pl-3 text-slate-300 cursor-pointer">
-                    <input id="follow-cpu" type="checkbox" checked class="accent-sky-500">
-                    <span data-i18n="followCpu">CPUの手を追う</span>
-                </label>
+                <label for="level-select" class="pl-2 text-slate-300 whitespace-nowrap" data-i18n="level">CPUの強さ</label>
+                <select id="level-select" class="bg-slate-700 text-white font-semibold rounded-lg px-2 py-1">
+                    <option value="easy" data-i18n="levelEasy">弱い</option>
+                    <option value="normal" selected data-i18n="levelNormal">普通</option>
+                    <option value="hard" data-i18n="levelHard">強い</option>
+                </select>
             </div>
+            <label class="flex justify-center items-center space-x-1 mb-1 text-xs text-slate-300 cursor-pointer">
+                <input id="follow-cpu" type="checkbox" checked class="accent-sky-500">
+                <span data-i18n="followCpu">CPUの手を追う</span>
+            </label>
 
             <p class="text-xs text-slate-400 mb-4" data-i18n="ruleLine">石と、囲んだ点の合計が多い方の勝ち</p>
 
@@ -108,6 +114,112 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/ConvexHull.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/ConvexGeometry.js"></script>
 
+    <!-- Monte Carlo CPU, run as a Web Worker so the page stays responsive -->
+    <script type="text/worker" id="cpu-worker">
+        // For each legal move, play random games to the end (UCB1 decides which move to try
+        // next) and choose the move that was tried most, i.e. the most promising one.
+        self.onmessage = (e) => {
+            const { token, board, adj, color, komi, history, timeMs } = e.data;
+            const N = board.length;
+            const enemyOf = c => c === 'B' ? 'W' : 'B';
+            const seen = new Set(history);
+            const key = b => b.map(c => c || '.').join('');
+
+            function group(b, start) {
+                const c = b[start], g = [start], visited = new Set(g);
+                for (let k = 0; k < g.length; k++) {
+                    for (const n of adj[g[k]]) {
+                        if (b[n] === c && !visited.has(n)) { visited.add(n); g.push(n); }
+                    }
+                }
+                return g;
+            }
+            function hasLiberty(b, g) {
+                return g.some(x => adj[x].some(n => b[n] === null));
+            }
+            // Plays c at i on b; false (b unchanged) if it is suicide
+            function play(b, i, c) {
+                const enemy = enemyOf(c);
+                b[i] = c;
+                let captured = false;
+                for (const n of adj[i]) {
+                    if (b[n] === enemy) {
+                        const g = group(b, n);
+                        if (!hasLiberty(b, g)) { g.forEach(x => b[x] = null); captured = true; }
+                    }
+                }
+                if (!captured && !hasLiberty(b, group(b, i))) { b[i] = null; return false; }
+                return true;
+            }
+            const isOwnEye = (b, i, c) => adj[i].every(n => b[n] === c);
+
+            function playout(b, c) {
+                let passes = 0;
+                for (let moves = 0; passes < 2 && moves < 300; moves++) {
+                    const cands = [];
+                    for (let i = 0; i < N; i++) if (b[i] === null && !isOwnEye(b, i, c)) cands.push(i);
+                    let played = false;
+                    while (cands.length > 0 && !played) {
+                        const pick = cands.splice(Math.floor(Math.random() * cands.length), 1)[0];
+                        played = play(b, pick, c);
+                    }
+                    passes = played ? 0 : passes + 1;
+                    c = enemyOf(c);
+                }
+            }
+            // Area score from color's side, komi to White
+            function margin(b) {
+                let s = { B: 0, W: komi };
+                const visited = new Uint8Array(N);
+                for (let i = 0; i < N; i++) {
+                    if (b[i] !== null) { s[b[i]]++; continue; }
+                    if (visited[i]) continue;
+                    const region = [i], borders = new Set();
+                    visited[i] = 1;
+                    for (let k = 0; k < region.length; k++) {
+                        for (const n of adj[region[k]]) {
+                            if (b[n] === null) { if (!visited[n]) { visited[n] = 1; region.push(n); } }
+                            else borders.add(b[n]);
+                        }
+                    }
+                    if (borders.size === 1) s[[...borders][0]] += region.length;
+                }
+                return color === 'B' ? s.B - s.W : s.W - s.B;
+            }
+
+            // Candidate moves: legal, not filling own eyes, not repeating a position
+            const cands = [];
+            for (let i = 0; i < N; i++) {
+                if (board[i] !== null || isOwnEye(board, i, color)) continue;
+                const b = board.slice();
+                if (play(b, i, color) && !seen.has(key(b))) cands.push({ i, after: b, n: 0, wins: 0 });
+            }
+            if (cands.length === 0) {
+                self.postMessage({ token, move: -1 });
+                return;
+            }
+
+            const start = Date.now();
+            let total = 0;
+            while (total < cands.length || Date.now() - start < timeMs) {
+                let best = null, bestU = -Infinity;
+                for (const c of cands) {
+                    const u = c.n === 0 ? Infinity : c.wins / c.n + Math.sqrt(2 * Math.log(total) / c.n);
+                    if (u > bestU) { bestU = u; best = c; }
+                }
+                const b = best.after.slice();
+                playout(b, enemyOf(color));
+                best.n++;
+                if (margin(b) > 0) best.wins++;
+                total++;
+            }
+
+            let chosen = cands[0];
+            for (const c of cands) if (c.n > chosen.n) chosen = c;
+            self.postMessage({ token, move: chosen.i, winRate: chosen.wins / chosen.n, playouts: total });
+        };
+    </script>
+
     <script>
         // --- I18N (Japanese if the browser's preferred language is Japanese, otherwise English) ---
         const LANG = ((navigator.languages && navigator.languages[0]) || navigator.language || 'en')
@@ -139,6 +251,11 @@
                 cpuWins: 'CPUの勝ち',
                 komi: 'コミ（白）',
                 followCpu: 'CPUの手を追う',
+                level: 'CPUの強さ',
+                levelEasy: '弱い',
+                levelNormal: '普通',
+                levelHard: '強い',
+                levelChanged: name => `CPUの強さを「${name}」にしました`,
                 komiChanged: k => `コミを ${k} 目にしました`,
                 outlook: 'そろそろ終わりかもしれないですね'
             },
@@ -167,7 +284,12 @@
                 playerWins: 'You win',
                 cpuWins: 'CPU wins',
                 komi: 'Komi (White)',
-                followCpu: 'Follow CPU',
+                followCpu: 'Follow CPU moves',
+                level: 'CPU',
+                levelEasy: 'Easy',
+                levelNormal: 'Normal',
+                levelHard: 'Hard',
+                levelChanged: name => `CPU level: ${name}`,
                 komiChanged: k => `Komi set to ${k}`,
                 outlook: 'It might be about time to wrap up.'
             }
@@ -619,7 +741,27 @@
         // --- CPU AI ---
         function playCPU() {
             if (gameOver || scoring || currentPlayer !== 'W') return;
+            if (cpuLevel === 'easy' || !cpuWorker) {
+                playHeuristic();
+                return;
+            }
 
+            // Monte Carlo search runs in the worker; the answer comes back in cpuWorker.onmessage
+            const token = ++cpuToken;
+            setThinking(true);
+            cpuWorker.postMessage({
+                token,
+                board,
+                adj,
+                color: 'W',
+                komi,
+                history: [...positionHistory],
+                timeMs: CPU_THINK_MS[cpuLevel]
+            });
+        }
+
+        // Easy level: one move ahead, scoring captures and liberties
+        function playHeuristic() {
             let validMoves = [];
             let bestMove = -1;
             let bestScore = -9999;
@@ -678,7 +820,11 @@
                 return;
             }
 
-            // No useful move left: resign if behind (dead stones not counted), otherwise pass
+            cpuHasNoMove();
+        }
+
+        // No useful move left: resign if behind (dead stones not counted), otherwise pass
+        function cpuHasNoMove() {
             let score = computeScore(estimateDeadStones('W'));
             if (score.W < score.B) {
                 resign(score);
@@ -1138,6 +1284,8 @@
             scoring = false;
             scoringDead = null;
             lastMove = -1;
+            cpuToken++; // Drop any answer the CPU is still working on
+            setThinking(false);
             document.getElementById('scoring').classList.add('hidden');
             document.getElementById('btn-confirm').classList.add('hidden');
             document.getElementById('btn-pass').classList.remove('hidden');
@@ -1176,6 +1324,45 @@
                 toast.classList.add('hidden');
             }, 3000);
         }
+
+        // --- CPU LEVEL AND MONTE CARLO WORKER ---
+        const CPU_THINK_MS = { normal: 700, hard: 2500 }; // Thinking time per move
+        let cpuLevel = 'normal';
+        let cpuToken = 0; // Answers for an older request (e.g. before a reset) are ignored
+
+        let cpuWorker = null;
+        try {
+            const src = document.getElementById('cpu-worker').textContent;
+            cpuWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+        } catch (e) {
+            cpuWorker = null; // Falls back to the easy CPU
+        }
+
+        if (cpuWorker) {
+            cpuWorker.onmessage = (e) => {
+                const { token, move } = e.data;
+                if (token !== cpuToken) return;
+                setThinking(false);
+                if (gameOver || scoring || currentPlayer !== 'W') return;
+                if (move < 0) {
+                    cpuHasNoMove();
+                    return;
+                }
+                attemptMove(move);
+                if (currentPlayer === 'W') playHeuristic(); // Should not happen; never leave the CPU stuck
+            };
+        }
+
+        // The CPU panel pulses while the CPU is thinking
+        function setThinking(on) {
+            document.getElementById('pnl-W').classList.toggle('animate-pulse', on);
+        }
+
+        const levelSelect = document.getElementById('level-select');
+        levelSelect.addEventListener('change', () => {
+            cpuLevel = levelSelect.value;
+            showToast(t('levelChanged')(levelSelect.options[levelSelect.selectedIndex].textContent));
+        });
 
         // --- FOLLOWING THE CPU'S MOVES ---
         // Remembered per browser; works without storage too
