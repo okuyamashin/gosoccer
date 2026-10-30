@@ -62,7 +62,7 @@
                 </div>
             </div>
 
-            <div class="flex justify-center items-center space-x-2 mb-4 text-sm">
+            <div class="flex justify-center items-center space-x-2 mb-1 text-sm">
                 <label for="komi-select" class="text-slate-300" data-i18n="komi">コミ（白）</label>
                 <select id="komi-select" class="bg-slate-700 text-white font-semibold rounded-lg px-2 py-1 disabled:opacity-50">
                     <option value="1.5">1.5</option>
@@ -72,12 +72,20 @@
                 </select>
             </div>
 
+            <p class="text-xs text-slate-400 mb-4" data-i18n="ruleLine">石と、囲んだ点の合計が多い方の勝ち</p>
+
+            <div id="scoring" class="hidden mb-4 px-2 py-2 rounded-lg bg-sky-500/20 border border-sky-400 text-sm">
+                <p id="scoring-score" class="font-bold whitespace-pre-line"></p>
+                <p class="text-xs text-slate-300 mt-1" data-i18n="scoringHelp">半透明の石は死に石と判定しました。</p>
+            </div>
+
             <p id="outlook" class="hidden mb-4 px-2 py-2 rounded-lg bg-amber-500/20 border border-amber-400 text-sm font-bold" data-i18n="outlook">そろそろ終わりかもしれないですね</p>
 
             <p id="result" class="hidden mb-4 px-2 py-2 rounded-lg bg-emerald-500/20 border border-emerald-400 text-sm font-bold whitespace-pre-line"></p>
 
             <div class="flex space-x-3 justify-center">
                 <button id="btn-pass" class="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg" data-i18n="pass">パス</button>
+                <button id="btn-confirm" class="hidden flex-1 bg-sky-700 hover:bg-sky-600 active:bg-sky-800 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg" data-i18n="confirm">確定</button>
                 <button id="btn-reset" class="flex-1 bg-red-900 hover:bg-red-800 active:bg-red-950 text-white font-semibold py-2 px-4 rounded-xl transition shadow-lg" data-i18n="reset">リセット</button>
             </div>
         </div>
@@ -117,7 +125,11 @@
                 gameOver: '両者パスで終局です',
                 gameReset: 'リセットしました',
                 cpuResigns: 'CPU：「参りました」',
-                resultResign: 'CPU：「参りました」\nあなたの中押し勝ち',
+                winByResign: 'あなたの中押し勝ち',
+                ruleLine: '石と、囲んだ点の合計が多い方の勝ち',
+                scoringTitle: '地の確認',
+                scoringHelp: '半透明の石は死に石と判定しました。違っていたら石をタップして切り替え、「確定」を押してください。',
+                confirm: '確定',
                 resultScore: (b, w, k) => `黒 ${b} 対 白 ${w}（コミ ${k} 込み）`,
                 playerWins: 'あなたの勝ち',
                 cpuWins: 'CPUの勝ち',
@@ -141,7 +153,11 @@
                 gameOver: 'Game Over! Both players passed.',
                 gameReset: 'Game Reset',
                 cpuResigns: 'CPU: "I resign."',
-                resultResign: 'CPU: "I resign."\nYou win by resignation',
+                winByResign: 'You win by resignation',
+                ruleLine: 'Most stones plus surrounded points wins',
+                scoringTitle: 'Check the result',
+                scoringHelp: 'Faded stones are judged dead. Tap a stone to change it, then press Confirm.',
+                confirm: 'Confirm',
                 resultScore: (b, w, k) => `Black ${b} – White ${w} (incl. komi ${k})`,
                 playerWins: 'You win',
                 cpuWins: 'CPU wins',
@@ -168,6 +184,10 @@
         let consecutivePasses = 0;
         let isCPUTurn = false;
         let gameOver = false;
+        // While checking the result after both passes: the stones judged dead (null otherwise).
+        // Kept after confirming so the final board still shows dead stones and territory.
+        let scoringDead = null;
+        let scoring = false;
         // Komi for White. Default 3.5; can be changed from the panel at any time until the game ends.
         // Values step by 2 because the area-score margin is always even (see TODO.md K2).
         let komi = 3.5;
@@ -197,6 +217,15 @@
         const matIllegal = new THREE.MeshBasicMaterial({
             color: 0xef4444, transparent: true, opacity: 0.8
         });
+        // Result check: dead stones are faded, territory gets a small marker of its owner's color
+        const matBlackDead = new THREE.MeshPhysicalMaterial({ 
+            color: 0x111111, roughness: 0.2, transparent: true, opacity: 0.35 
+        });
+        const matWhiteDead = new THREE.MeshPhysicalMaterial({ 
+            color: 0xf8f9fa, roughness: 0.2, transparent: true, opacity: 0.35 
+        });
+        const matTerritoryB = new THREE.MeshBasicMaterial({ color: 0x111111 });
+        const matTerritoryW = new THREE.MeshBasicMaterial({ color: 0xf8f9fa });
         // Red outline around stones in atari (a slightly larger back-face sphere)
         const matAtari = new THREE.MeshBasicMaterial({
             color: 0xef4444, side: THREE.BackSide
@@ -321,6 +350,8 @@
             controls.minDistance = 8;
             controls.maxDistance = 25;
             fitCamera();
+            // The panel grows when the result check or messages appear; keep the ball below it
+            new ResizeObserver(() => fitCamera()).observe(document.getElementById('panel'));
 
             // Lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -439,6 +470,10 @@
 
                 if(intersects.length > 0) {
                     let clickedIndex = intersects[0].object.userData.index;
+                    if (scoring) {
+                        if (board[clickedIndex] !== null) toggleDead(clickedIndex);
+                        return;
+                    }
                     // Prevent player from clicking during CPU turn
                     if (!isCPUTurn && currentPlayer === 'B') {
                         attemptMove(clickedIndex);
@@ -450,7 +485,7 @@
         // --- GO LOGIC ---
 
         function attemptMove(index) {
-            if(gameOver || board[index] !== null) return; // Game finished or already occupied
+            if(gameOver || scoring || board[index] !== null) return; // Game finished or already occupied
 
             // Save state for rollback (Ko / Suicide)
             let prevBoard = [...board];
@@ -564,7 +599,7 @@
 
         // --- CPU AI ---
         function playCPU() {
-            if (gameOver || currentPlayer !== 'W') return;
+            if (gameOver || scoring || currentPlayer !== 'W') return;
 
             let validMoves = [];
             let bestMove = -1;
@@ -624,10 +659,10 @@
                 return;
             }
 
-            // No useful move left: resign if behind, otherwise pass
-            let score = computeScore();
+            // No useful move left: resign if behind (dead stones not counted), otherwise pass
+            let score = computeScore(estimateDeadStones('W'));
             if (score.W < score.B) {
-                resign();
+                resign(score);
             } else {
                 passTurn();
             }
@@ -639,12 +674,13 @@
         }
 
         // --- SCORING (area scoring: stones + surrounded empty points, komi to White) ---
-        function computeScore() {
-            let score = { B: 0, W: komi };
+        // Owner of every point ('B', 'W' or null) on board b
+        function areaOwnership(b) {
+            let owner = new Array(TOTAL_NODES).fill(null);
             let visited = new Set();
             for (let i = 0; i < TOTAL_NODES; i++) {
-                if (board[i] !== null) {
-                    score[board[i]]++;
+                if (b[i] !== null) {
+                    owner[i] = b[i];
                     continue;
                 }
                 if (visited.has(i)) continue;
@@ -658,21 +694,122 @@
                     let curr = queue.shift();
                     region.push(curr);
                     adj[curr].forEach(n => {
-                        if (board[n] === null) {
+                        if (b[n] === null) {
                             if (!visited.has(n)) {
                                 visited.add(n);
                                 queue.push(n);
                             }
                         } else {
-                            borders.add(board[n]);
+                            borders.add(b[n]);
                         }
                     });
                 }
                 if (borders.size === 1) {
-                    score[[...borders][0]] += region.length;
+                    let color = [...borders][0];
+                    region.forEach(n => owner[n] = color);
                 }
             }
+            return owner;
+        }
+
+        // Board with the given dead stones taken off
+        function boardWithoutDead(dead) {
+            return board.map((c, i) => dead.has(i) ? null : c);
+        }
+
+        function computeScore(dead = new Set()) {
+            let score = { B: 0, W: komi };
+            areaOwnership(boardWithoutDead(dead)).forEach(c => { if (c) score[c]++; });
             return score;
+        }
+
+        // --- DEAD STONE ESTIMATE (Monte Carlo) ---
+        // From the current position, play many random games to the end and see who
+        // usually owns each point. A group whose points usually end up the opponent's is dead.
+        const PLAYOUTS = 400;
+
+        function estimateDeadStones(firstToMove) {
+            let ownerSum = new Array(TOTAL_NODES).fill(0); // +1 Black, -1 White
+            for (let k = 0; k < PLAYOUTS; k++) {
+                let b = randomPlayout([...board], firstToMove);
+                areaOwnership(b).forEach((c, i) => {
+                    if (c === 'B') ownerSum[i]++;
+                    else if (c === 'W') ownerSum[i]--;
+                });
+            }
+
+            let dead = new Set();
+            let seen = new Set();
+            for (let i = 0; i < TOTAL_NODES; i++) {
+                if (board[i] === null || seen.has(i)) continue;
+                let grp = getGroup(i);
+                grp.forEach(n => seen.add(n));
+                let mean = grp.reduce((sum, n) => sum + ownerSum[n], 0) / (grp.length * PLAYOUTS);
+                let ownSign = board[i] === 'B' ? 1 : -1;
+                if (mean * ownSign < 0) grp.forEach(n => dead.add(n)); // Usually owned by the opponent
+            }
+            return dead;
+        }
+
+        // Random game on board b until neither side has a move other than filling its own eyes
+        function randomPlayout(b, color) {
+            let passes = 0;
+            for (let moves = 0; passes < 2 && moves < 300; moves++) {
+                let candidates = [];
+                for (let i = 0; i < TOTAL_NODES; i++) {
+                    if (b[i] === null && !adj[i].every(n => b[n] === color)) candidates.push(i);
+                }
+                let played = false;
+                while (candidates.length > 0 && !played) {
+                    let pick = candidates.splice(Math.floor(Math.random() * candidates.length), 1)[0];
+                    played = tryPlayoutMove(b, pick, color);
+                }
+                passes = played ? 0 : passes + 1;
+                color = color === 'B' ? 'W' : 'B';
+            }
+            return b;
+        }
+
+        // Plays color at index on b if it is not suicide (ko is ignored in playouts)
+        function tryPlayoutMove(b, index, color) {
+            const enemy = color === 'B' ? 'W' : 'B';
+            b[index] = color;
+            let captured = false;
+            adj[index].forEach(n => {
+                if (b[n] === enemy) {
+                    let grp = groupOn(b, n);
+                    if (libertiesOn(b, grp) === 0) {
+                        grp.forEach(x => b[x] = null);
+                        captured = true;
+                    }
+                }
+            });
+            if (!captured && libertiesOn(b, groupOn(b, index)) === 0) {
+                b[index] = null;
+                return false;
+            }
+            return true;
+        }
+
+        function groupOn(b, start) {
+            let color = b[start];
+            let group = [start];
+            let visited = new Set(group);
+            for (let k = 0; k < group.length; k++) {
+                adj[group[k]].forEach(n => {
+                    if (b[n] === color && !visited.has(n)) {
+                        visited.add(n);
+                        group.push(n);
+                    }
+                });
+            }
+            return group;
+        }
+
+        function libertiesOn(b, group) {
+            let libs = new Set();
+            group.forEach(node => adj[node].forEach(n => { if (b[n] === null) libs.add(n); }));
+            return libs.size;
         }
 
         // --- OUTLOOK: has the player (Black) certainly lost? ---
@@ -759,7 +896,7 @@
         let outlookShown = false;
         function updateOutlook() {
             const el = document.getElementById('outlook');
-            if (gameOver || !playerCannotWin()) {
+            if (gameOver || scoring || !playerCannotWin()) {
                 el.classList.add('hidden');
                 return;
             }
@@ -771,24 +908,56 @@
         }
 
         // --- GAME END ---
-        function endGame() {
-            gameOver = true;
+        // Both passed: show the estimated dead stones and territory, and let the player fix them
+        function startScoring() {
+            scoring = true;
             isCPUTurn = false;
-            komiSelect.disabled = true; // Result is final
-            updateUI(); // Clear turn highlight and illegal-point markers
-            let score = computeScore();
-            let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
-            showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
-            updateOutlook(); // Hidden once the result is shown
+            scoringDead = estimateDeadStones('B');
+            document.getElementById('scoring').classList.remove('hidden');
+            document.getElementById('btn-pass').classList.add('hidden');
+            document.getElementById('btn-confirm').classList.remove('hidden');
+            updateUI();
+            updateScoringPreview();
+            updateOutlook();
             showToast(t('gameOver'));
         }
 
-        function resign() {
+        function updateScoringPreview() {
+            let score = computeScore(scoringDead);
+            document.getElementById('scoring-score').textContent =
+                `${t('scoringTitle')}\n${t('resultScore')(score.B, score.W, komi)}`;
+        }
+
+        // Tapping a stone switches its whole group between alive and dead
+        function toggleDead(index) {
+            let grp = getGroup(index);
+            let makeDead = !scoringDead.has(index);
+            grp.forEach(n => makeDead ? scoringDead.add(n) : scoringDead.delete(n));
+            updateBoardVisuals();
+            updateScoringPreview();
+        }
+
+        function endGame() {
+            gameOver = true;
+            scoring = false;
+            isCPUTurn = false;
+            komiSelect.disabled = true; // Result is final
+            document.getElementById('scoring').classList.add('hidden');
+            document.getElementById('btn-confirm').classList.add('hidden');
+            document.getElementById('btn-pass').classList.remove('hidden');
+            updateUI(); // Clear turn highlight and illegal-point markers
+            let score = computeScore(scoringDead);
+            let winner = score.B > score.W ? t('playerWins') : t('cpuWins');
+            showResult(`${t('resultScore')(score.B, score.W, komi)}\n${winner}`);
+            updateOutlook(); // Hidden once the result is shown
+        }
+
+        function resign(score) {
             gameOver = true;
             isCPUTurn = false;
             komiSelect.disabled = true; // Result is final
             updateUI(); // Clear turn highlight and illegal-point markers
-            showResult(t('resultResign'));
+            showResult(`${t('cpuResigns')}\n${t('resultScore')(score.B, score.W, komi)}\n${t('winByResign')}`);
             updateOutlook(); // Hidden once the result is shown
             showToast(t('cpuResigns'));
         }
@@ -807,7 +976,7 @@
             updateUI();
 
             if (consecutivePasses >= 2) {
-                endGame();
+                startScoring();
             } else {
                 showToast(msg);
                 if (currentPlayer === 'W') {
@@ -831,7 +1000,12 @@
             });
 
             // Illegal points are shown only while Black is to move
-            const showIllegal = !gameOver && currentPlayer === 'B';
+            const showIllegal = !gameOver && !scoring && currentPlayer === 'B';
+
+            if (scoringDead) {
+                showScoringBoard();
+                return;
+            }
 
             for(let i = 0; i < TOTAL_NODES; i++){
                 let mesh = nodeMeshes[i];
@@ -849,6 +1023,28 @@
                     mesh.scale.set(0.2, 0.2, 0.2); // Shrink back to empty indicator
                 }
                 mesh.userData.halo.visible = inAtari.has(i);
+            }
+        }
+
+        // Result view: dead stones faded, territory marked with its owner's color
+        function showScoringBoard() {
+            let owner = areaOwnership(boardWithoutDead(scoringDead));
+            for (let i = 0; i < TOTAL_NODES; i++) {
+                let mesh = nodeMeshes[i];
+                mesh.userData.halo.visible = false;
+                if (board[i] !== null && scoringDead.has(i)) {
+                    mesh.material = board[i] === 'B' ? matBlackDead : matWhiteDead;
+                    mesh.scale.set(1, 1, 1);
+                } else if (board[i] !== null) {
+                    mesh.material = board[i] === 'B' ? matBlack : matWhite;
+                    mesh.scale.set(1, 1, 1);
+                } else if (owner[i]) {
+                    mesh.material = owner[i] === 'B' ? matTerritoryB : matTerritoryW;
+                    mesh.scale.set(0.35, 0.35, 0.35);
+                } else {
+                    mesh.material = matEmpty;
+                    mesh.scale.set(0.2, 0.2, 0.2);
+                }
             }
         }
 
@@ -873,7 +1069,7 @@
             const pnlB = document.getElementById('pnl-B');
             const pnlW = document.getElementById('pnl-W');
 
-            if(gameOver) {
+            if(gameOver || scoring) {
                 // No one is to move: drop both highlights
                 pnlB.classList.remove('border-blue-400', 'bg-blue-500/20', 'opacity-50');
                 pnlW.classList.remove('border-red-400', 'bg-red-500/20', 'opacity-50');
@@ -897,8 +1093,12 @@
         // UI Buttons
         document.getElementById('btn-pass').addEventListener('click', () => {
             // Only the player (Black) may press Pass, and only on their own turn
-            if (gameOver || isCPUTurn || currentPlayer !== 'B') return;
+            if (gameOver || scoring || isCPUTurn || currentPlayer !== 'B') return;
             passTurn();
+        });
+
+        document.getElementById('btn-confirm').addEventListener('click', () => {
+            if (scoring) endGame();
         });
 
         document.getElementById('btn-reset').addEventListener('click', () => {
@@ -909,6 +1109,11 @@
             positionHistory = new Set([boardKey(board)]);
             consecutivePasses = 0;
             gameOver = false;
+            scoring = false;
+            scoringDead = null;
+            document.getElementById('scoring').classList.add('hidden');
+            document.getElementById('btn-confirm').classList.add('hidden');
+            document.getElementById('btn-pass').classList.remove('hidden');
             komiSelect.disabled = false; // Keep the chosen komi for the next game
             outlookShown = false;
             updateOutlook();
@@ -924,6 +1129,7 @@
             komi = parseFloat(komiSelect.value);
             showToast(t('komiChanged')(komi));
             updateOutlook(); // Komi changes how much Black needs
+            if (scoring) updateScoringPreview();
         });
 
         // Toast Notification System
